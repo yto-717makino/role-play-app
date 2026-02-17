@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Dev
+.yarn/
+!.yarn/releases
+.vscode/*
+.idea/
+
+# Wrangler
+.wrangler
+
+# Environment variables
+.env
+.env.production
+.dev.vars
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# PM2
+.pm2/
+pids/
+
+# OS
+.DS_Store
+*.backup
+*.bak
