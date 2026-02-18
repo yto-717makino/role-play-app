@@ -652,8 +652,10 @@ function renderRoleplay() {
       ${state.isProcessing ? renderTypingIndicator() : ''}
     </div>
 
-    <div id="interimContainer" class="px-4 py-2 bg-blue-50 border-t border-blue-100 flex-shrink-0 ${state.interimTranscript ? '' : 'hidden'}">
-      ${state.interimTranscript ? `<p class="text-sm text-blue-600 italic"><i class="fas fa-microphone text-blue-400 mr-1"></i>${escapeHtml(state.interimTranscript)}</p>` : ''}
+    <div id="interimContainer" class="px-4 py-3 bg-blue-50 border-t border-blue-100 flex-shrink-0 ${state.interimTranscript ? '' : (state.isListening ? '' : 'hidden')}">
+      ${state.interimTranscript
+        ? `<p class="text-sm text-blue-700"><i class="fas fa-microphone text-blue-400 mr-1"></i><span class="font-medium">認識中:</span> ${escapeHtml(state.interimTranscript)}</p>`
+        : (state.isListening ? '<p class="text-sm text-blue-400 italic"><i class="fas fa-microphone text-blue-300 mr-1"></i>話し始めてください...</p>' : '')}
     </div>
 
     <div class="bg-white border-t border-gray-200 px-4 py-4 flex-shrink-0">
@@ -662,10 +664,17 @@ function renderRoleplay() {
         <button onclick="toggleTextInput()" class="w-12 h-12 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center transition-all" title="テキスト入力">
           <i class="fas fa-keyboard"></i>
         </button>
+        ${state.isListening ? `
+          <button id="sendVoiceBtn" onclick="sendVoiceMessage()"
+            class="w-16 h-16 rounded-full bg-green-500 hover:bg-green-600 text-white flex items-center justify-center shadow-lg transition-all relative"
+            title="発話完了・送信">
+            <i class="fas fa-paper-plane text-xl"></i>
+          </button>
+        ` : ''}
         <button id="micBtn" onclick="toggleListening()"
-          class="w-16 h-16 rounded-full ${state.isListening ? 'bg-red-500 hover:bg-red-600' : 'btn-primary'} text-white flex items-center justify-center shadow-lg transition-all relative"
+          class="${state.isListening ? 'w-12 h-12' : 'w-16 h-16'} rounded-full ${state.isListening ? 'bg-red-500 hover:bg-red-600' : 'btn-primary'} text-white flex items-center justify-center shadow-lg transition-all relative"
           ${state.isProcessing || state.isSpeaking ? 'disabled' : ''}>
-          ${state.isListening ? '<div class="absolute inset-0 rounded-full bg-red-400 pulse-ring"></div><i class="fas fa-stop text-xl relative z-10"></i>' : '<i class="fas fa-microphone text-xl"></i>'}
+          ${state.isListening ? '<div class="absolute inset-0 rounded-full bg-red-400 pulse-ring"></div><i class="fas fa-microphone-slash text-lg relative z-10"></i>' : '<i class="fas fa-microphone text-xl"></i>'}
         </button>
         <button onclick="endRoleplay()" class="w-12 h-12 rounded-full bg-gray-100 hover:bg-red-100 text-gray-600 hover:text-red-600 flex items-center justify-center transition-all" title="ロープレ終了">
           <i class="fas fa-stop-circle"></i>
@@ -682,7 +691,7 @@ function renderRoleplay() {
 }
 
 function renderStatusText() {
-  if (state.isListening) return `<div class="flex items-center justify-center gap-2"><div class="voice-wave voice-wave-red"><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><span class="text-sm font-medium text-red-600">聞いています...</span></div>`;
+  if (state.isListening) return `<div class="flex items-center justify-center gap-2"><div class="voice-wave voice-wave-red"><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><span class="text-sm font-medium text-red-600">音声を聞いています... 話し終わったら送信ボタンを押してください</span></div>`;
   if (state.isProcessing) return `<div class="flex items-center justify-center gap-2"><div class="animate-spin w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full"></div><span class="text-sm text-gray-500">考え中...</span></div>`;
   if (state.isSpeaking) return `<div class="flex items-center justify-center gap-2"><div class="voice-wave"><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><span class="text-sm font-medium text-blue-600">顧客が話しています...</span></div>`;
   return `<p class="text-sm text-gray-400">マイクボタンを押して話してください</p>`;
@@ -692,7 +701,7 @@ function renderChatBubble(msg, index) {
   const isUser = msg.role === 'user';
   return `<div class="flex ${isUser ? 'justify-end' : 'justify-start'} fade-in">
     ${!isUser ? `<div class="flex flex-col items-center mr-2 mt-1 flex-shrink-0"><div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center"><i class="fas fa-user-tie text-white text-xs"></i></div><span class="text-[10px] text-gray-400 mt-0.5">顧客</span></div>` : ''}
-    <div class="${isUser ? 'chat-bubble-user' : 'chat-bubble-ai'} px-4 py-3 max-w-[80%] shadow-sm"><p class="text-sm leading-relaxed whitespace-pre-wrap">${escapeHtml(msg.content)}</p></div>
+    <div class="${isUser ? 'chat-bubble-user' : 'chat-bubble-ai'} px-4 py-3 max-w-[80%] shadow-sm"><p class="text-sm leading-relaxed whitespace-pre-wrap chat-bubble-text">${escapeHtml(msg.content)}</p></div>
     ${isUser ? `<div class="flex flex-col items-center ml-2 mt-1 flex-shrink-0"><div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center"><i class="fas fa-user text-white text-xs"></i></div><span class="text-[10px] text-gray-400 mt-0.5">あなた</span></div>` : ''}
   </div>`;
 }
@@ -755,8 +764,8 @@ function updateMicUI() {
   const micBtn = document.getElementById('micBtn');
   if (micBtn) {
     if (state.isListening) {
-      micBtn.className = 'w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-lg transition-all relative';
-      micBtn.innerHTML = '<div class="absolute inset-0 rounded-full bg-red-400 pulse-ring"></div><i class="fas fa-stop text-xl relative z-10"></i>';
+      micBtn.className = 'w-12 h-12 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-lg transition-all relative';
+      micBtn.innerHTML = '<div class="absolute inset-0 rounded-full bg-red-400 pulse-ring"></div><i class="fas fa-microphone-slash text-lg relative z-10"></i>';
       micBtn.disabled = false;
     } else {
       micBtn.className = 'w-16 h-16 rounded-full btn-primary text-white flex items-center justify-center shadow-lg transition-all relative';
@@ -790,11 +799,10 @@ async function generateAIFirstMessage() {
     });
     if (!response.ok) { const err = await response.json(); throw new Error(err.error || 'API呼び出しに失敗しました'); }
 
-    const text = await readStream(response);
-    state.messages.push({ role: 'assistant', content: text });
+    const text = await readStreamRealtime(response, 'assistant');
+    // readStreamRealtime が既にバブルを追加しているので、messagesだけ更新
+    state.messages[state.messages.length - 1].content = text;
     state.isProcessing = false;
-    hideTypingIndicator();
-    appendChatBubble(state.messages[state.messages.length - 1]);
     updateMicUI();
     if (state.autoSpeak) speak(text);
   } catch (e) {
@@ -808,6 +816,43 @@ async function generateAIFirstMessage() {
     if (state.autoSpeak) speak(fallback);
     if (e.message) showToast(`AIエラー: ${e.message}`, 'error');
   }
+}
+
+// ===== ストリーミング読み取り（リアルタイム表示） =====
+async function readStreamRealtime(response, role) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let bubbleCreated = false;
+
+  // タイピングインジケーターを消して空のバブルを作成
+  hideTypingIndicator();
+  state.messages.push({ role, content: '' });
+  const msgIndex = state.messages.length - 1;
+
+  // 空のバブルをDOMに追加
+  appendChatBubble(state.messages[msgIndex]);
+  bubbleCreated = true;
+
+  // バブル内のテキスト要素を取得
+  const chatArea = document.getElementById('chatArea');
+  const bubbles = chatArea?.querySelectorAll('.chat-bubble-text');
+  const lastBubbleText = bubbles ? bubbles[bubbles.length - 1] : null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = decoder.decode(value, { stream: true });
+    text += chunk;
+    state.messages[msgIndex].content = text;
+
+    // リアルタイムでバブルのテキストを更新
+    if (lastBubbleText) {
+      lastBubbleText.textContent = text;
+      scrollChatToBottom();
+    }
+  }
+  return text.trim();
 }
 
 async function readStream(response) {
@@ -827,6 +872,34 @@ async function readStream(response) {
 // ============================================================
 window.toggleListening = () => { state.isListening ? stopListening() : startListening(); };
 
+// ===== 発話完了・送信ボタン =====
+window.sendVoiceMessage = () => {
+  // 音声認識から蓄積されたテキストを送信
+  if (!state.isListening) return;
+  const recognition = state.recognition;
+  // recognition の内部 finalTranscript を取得するため、interimTranscript を利用
+  const text = state._voiceTranscript || '';
+  if (!text.trim()) {
+    showToast('まだ音声が認識されていません。話してからボタンを押してください。', 'error');
+    return;
+  }
+  state._voiceTranscript = '';
+  updateInterimDisplay('');
+  pauseListeningForResponse();
+  state.isListening = false;
+  updateMicUI();
+  render(); // ボタン配置を再レンダリング
+  sendMessage(text.trim());
+};
+
+function updateSendVoiceBtn() {
+  const btn = document.getElementById('sendVoiceBtn');
+  if (!btn) return;
+  const hasText = !!(state._voiceTranscript && state._voiceTranscript.trim());
+  btn.disabled = !hasText;
+  btn.className = `w-16 h-16 rounded-full ${hasText ? 'bg-green-500 hover:bg-green-600' : 'bg-gray-300 cursor-not-allowed'} text-white flex items-center justify-center shadow-lg transition-all relative`;
+}
+
 function createRecognition() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { showToast('お使いのブラウザは音声認識に対応していません。Chrome をお使いください。', 'error'); return null; }
@@ -838,30 +911,23 @@ function createRecognition() {
   recognition.maxAlternatives = 1;
 
   let finalTranscript = '';
-  let silenceTimer = null;
-
-  function resetSilenceTimer() {
-    if (silenceTimer) clearTimeout(silenceTimer);
-    if (finalTranscript.trim()) {
-      silenceTimer = setTimeout(() => {
-        if (state.isListening && finalTranscript.trim()) {
-          const t = finalTranscript.trim();
-          finalTranscript = '';
-          updateInterimDisplay('');
-          pauseListeningForResponse();
-          sendMessage(t);
-        }
-      }, 2000);
-    }
-  }
+  state._voiceTranscript = '';
 
   recognition.onresult = (e) => {
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) { finalTranscript += e.results[i][0].transcript; resetSilenceTimer(); }
-      else { interim += e.results[i][0].transcript; }
+      if (e.results[i].isFinal) {
+        finalTranscript += e.results[i][0].transcript;
+      } else {
+        interim += e.results[i][0].transcript;
+      }
     }
-    updateInterimDisplay(interim || finalTranscript);
+    state._voiceTranscript = finalTranscript;
+    // 現在認識済みテキスト + 途中テキストを表示
+    const displayText = finalTranscript + (interim ? interim : '');
+    updateInterimDisplay(displayText);
+    // 送信ボタンの有効/無効を更新
+    updateSendVoiceBtn();
   };
 
   recognition.onerror = (e) => {
@@ -899,7 +965,9 @@ function startListening() {
     recognition.start();
     state.recognition = recognition;
     state.isListening = true;
-    updateMicUI();
+    state._voiceTranscript = '';
+    render(); // ボタン配置を再レンダリング（送信ボタンを表示）
+    scrollChatToBottom();
   } catch (e) {
     showToast('マイクの起動に失敗しました。', 'error');
   }
@@ -907,10 +975,13 @@ function startListening() {
 
 function stopListening() {
   state.isListening = false;
+  state._voiceTranscript = '';
   if (state.recognition) { try { state.recognition.abort(); } catch(e) {} state.recognition = null; }
   state.interimTranscript = '';
   updateMicUI();
   updateInterimDisplay('');
+  render(); // ボタン配置を再レンダリング（送信ボタンを消す）
+  scrollChatToBottom();
 }
 
 function pauseListeningForResponse() {
@@ -921,7 +992,13 @@ function resumeListeningAfterResponse() {
   if (state.isListening && !state.recognition && !state.isSpeaking && !state.isProcessing) {
     const recognition = createRecognition();
     if (!recognition) return;
-    try { recognition.start(); state.recognition = recognition; } catch(e) {}
+    try {
+      recognition.start();
+      state.recognition = recognition;
+      state._voiceTranscript = '';
+      render();
+      scrollChatToBottom();
+    } catch(e) {}
   }
 }
 
@@ -929,8 +1006,16 @@ function updateInterimDisplay(text) {
   state.interimTranscript = text;
   const c = document.getElementById('interimContainer');
   if (c) {
-    if (text) { c.innerHTML = `<p class="text-sm text-blue-600 italic"><i class="fas fa-microphone text-blue-400 mr-1"></i>${escapeHtml(text)}</p>`; c.classList.remove('hidden'); }
-    else { c.innerHTML = ''; c.classList.add('hidden'); }
+    if (text) {
+      c.innerHTML = `<p class="text-sm text-blue-700"><i class="fas fa-microphone text-blue-400 mr-1"></i><span class="font-medium">認識中:</span> ${escapeHtml(text)}</p>`;
+      c.classList.remove('hidden');
+    } else if (state.isListening) {
+      c.innerHTML = '<p class="text-sm text-blue-400 italic"><i class="fas fa-microphone text-blue-300 mr-1"></i>話し始めてください...</p>';
+      c.classList.remove('hidden');
+    } else {
+      c.innerHTML = '';
+      c.classList.add('hidden');
+    }
   }
 }
 
@@ -958,11 +1043,10 @@ async function sendMessage(text) {
     });
     if (!response.ok) { const err = await response.json(); throw new Error(err.error || 'API呼び出しに失敗しました'); }
 
-    const aiText = await readStream(response);
-    state.messages.push({ role: 'assistant', content: aiText });
+    const aiText = await readStreamRealtime(response, 'assistant');
+    // readStreamRealtime が既にバブルを追加しているので、messagesだけ最終更新
+    state.messages[state.messages.length - 1].content = aiText;
     state.isProcessing = false;
-    hideTypingIndicator();
-    appendChatBubble(state.messages[state.messages.length - 1]);
     updateMicUI();
 
     if (state.autoSpeak) {

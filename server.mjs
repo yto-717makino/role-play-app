@@ -127,7 +127,7 @@ app.post('/api/chat', async (req, res) => {
         instructions: systemPrompt,
         reasoningEffort: 'none',
         temperature: 0.8,
-        max_output_tokens: 500,
+        max_output_tokens: 300,
       }
     );
 
