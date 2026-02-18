@@ -61,7 +61,7 @@ app.use((req, res, next) => {
 // ============================
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, scenario, persona, apiKey, baseURL, model } = req.body;
+    const { messages, scenario, persona, apiKey, baseURL, model, isFirstMessage } = req.body;
     
     if (!apiKey) {
       return res.status(400).json({ error: 'APIキーが設定されていません' });
@@ -70,8 +70,20 @@ app.post('/api/chat', async (req, res) => {
     const systemPrompt = buildSystemPrompt(scenario, persona);
     const allMessages = [
       { role: 'system', content: systemPrompt },
-      ...messages.map(m => ({ role: m.role, content: m.content }))
     ];
+
+    if (isFirstMessage) {
+      // 最初のメッセージ: AIが顧客として第一声を出す
+      // 会話の中でAI=assistant=顧客役、user=営業担当
+      allMessages.push({
+        role: 'user',
+        content: '（営業担当がお客様のオフィスに到着し、受付を通って会議室に案内されました。お客様が会議室に入ってきます。お客様として最初の一言をお願いします。簡潔に挨拶してください。）'
+      });
+    } else {
+      // 通常の会話: フロントエンドの messages をそのまま使う
+      // user = 営業担当の発言、assistant = 顧客(AI)の発言
+      allMessages.push(...messages.map(m => ({ role: m.role, content: m.content })));
+    }
 
     const response = await callLLM(
       apiKey,
@@ -142,10 +154,11 @@ app.post('/api/feedback', async (req, res) => {
     }
 
     const conversationLog = messages
-      .map(m => `${m.role === 'user' ? '営業担当' : '顧客(AI)'}：${m.content}`)
+      .map(m => `${m.role === 'user' ? '【営業担当（練習者）】' : '【顧客（AI）】'}：${m.content}`)
       .join('\n');
 
-    const feedbackPrompt = `あなたは営業研修の専門コーチです。以下のロールプレイングの会話ログを分析し、詳細なフィードバックを提供してください。
+    const feedbackPrompt = `あなたは営業研修の専門コーチです。以下のロールプレイングの会話ログを分析し、「営業担当（練習者）」のパフォーマンスについて詳細なフィードバックを提供してください。
+注意：「顧客（AI）」はAIが演じた顧客役です。評価対象は「営業担当（練習者）」の発言・行動のみです。
 
 ## ロープレシナリオ
 ${scenario}
@@ -277,23 +290,27 @@ server.listen(PORT, '0.0.0.0', () => {
 // システムプロンプト構築
 // ============================
 function buildSystemPrompt(scenario, persona) {
-  return `あなたは営業ロールプレイングの練習相手として、顧客役を演じてください。
+  return `あなたは営業ロールプレイングの練習相手として「顧客役」を演じてください。
+この会話では、あなた(assistant)＝顧客、相手(user)＝営業担当者です。
+あなたは絶対に営業担当者の立場で話してはいけません。常に顧客としてのみ発言してください。
 
 ## シナリオ
 ${scenario}
 
-## あなたの顧客ペルソナ
+## あなたが演じる顧客のペルソナ
 ${persona}
 
 ## 重要なルール
 - 必ず日本語で応答してください
-- 顧客として自然で現実的な反応をしてください
+- あなたは「顧客」です。営業担当者ではありません。この点を絶対に忘れないでください
+- 顧客の立場から、自然で現実的な反応をしてください
 - 簡単には承諾せず、適度に質問や懸念を投げかけてください
 - 1回の応答は2〜4文程度に抑え、会話のテンポを保ってください
-- 相手の提案が良ければ段階的に前向きになってください
+- 相手（営業担当者）の提案が良ければ段階的に前向きになってください
 - 感情的な反応も適度に入れてください（興味、疑問、不安など）
-- 「AI」「ロールプレイ」などメタ的な発言は一切しないでください
-- あくまで本物の顧客として振る舞い続けてください`;
+- 「AI」「ロールプレイ」「シミュレーション」などメタ的な発言は一切しないでください
+- あくまで本物の顧客として振る舞い続けてください
+- 自己紹介する際はペルソナに記載されている名前・肩書きを使ってください`;
 }
 
 // ============================

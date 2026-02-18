@@ -8,7 +8,7 @@ const state = {
   // API設定
   apiKey: localStorage.getItem('roleplay_apiKey') || '',
   baseURL: localStorage.getItem('roleplay_baseURL') || 'https://api.openai.com/v1',
-  model: localStorage.getItem('roleplay_model') || 'gpt-4o',
+  model: localStorage.getItem('roleplay_model') || 'gpt-4o-mini',
   apiConnected: false,
   // 設定
   scenario: '',
@@ -22,6 +22,7 @@ const state = {
   startTime: null,
   elapsedSeconds: 0,
   timerInterval: null,
+  turnCount: 0,
   // 音声
   recognition: null,
   synthesis: window.speechSynthesis,
@@ -32,7 +33,17 @@ const state = {
   // 設定
   autoSpeak: true,
   interimTranscript: '',
+  // テキスト入力表示状態
+  showTextInput: false,
 };
+
+// ===== 既知モデル一覧 =====
+const KNOWN_MODELS = [
+  'gpt-4o', 'gpt-4o-mini',
+  'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano',
+  'o4-mini', 'o3-mini',
+  'gpt-3.5-turbo',
+];
 
 // ===== 初期化 =====
 document.addEventListener('DOMContentLoaded', () => {
@@ -107,6 +118,8 @@ function renderSetup() {
       ? '<span class="text-yellow-600 text-sm font-medium"><i class="fas fa-exclamation-circle mr-1"></i>未テスト</span>'
       : '<span class="text-red-600 text-sm font-medium"><i class="fas fa-times-circle mr-1"></i>未設定</span>';
 
+  const isCustomModel = !KNOWN_MODELS.includes(state.model);
+
   return `
   <div class="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
     <!-- ヘッダー -->
@@ -150,9 +163,31 @@ function renderSetup() {
             </div>
             <div>
               <label class="block text-sm font-semibold text-gray-700 mb-1">モデル</label>
-              <input id="model" type="text" value="${state.model}"
-                class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm"
-                placeholder="gpt-4o">
+              <select id="model" onchange="onModelSelectChange()" class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm bg-white">
+                <optgroup label="GPT-4o 系">
+                  <option value="gpt-4o" ${state.model === 'gpt-4o' ? 'selected' : ''}>gpt-4o（高性能）</option>
+                  <option value="gpt-4o-mini" ${state.model === 'gpt-4o-mini' ? 'selected' : ''}>gpt-4o-mini（コスパ◎）</option>
+                </optgroup>
+                <optgroup label="GPT-4.1 系">
+                  <option value="gpt-4.1" ${state.model === 'gpt-4.1' ? 'selected' : ''}>gpt-4.1（最新・高性能）</option>
+                  <option value="gpt-4.1-mini" ${state.model === 'gpt-4.1-mini' ? 'selected' : ''}>gpt-4.1-mini（最新・コスパ◎）</option>
+                  <option value="gpt-4.1-nano" ${state.model === 'gpt-4.1-nano' ? 'selected' : ''}>gpt-4.1-nano（最速・最安）</option>
+                </optgroup>
+                <optgroup label="o 系（推論モデル）">
+                  <option value="o4-mini" ${state.model === 'o4-mini' ? 'selected' : ''}>o4-mini（推論・コスパ◎）</option>
+                  <option value="o3-mini" ${state.model === 'o3-mini' ? 'selected' : ''}>o3-mini（推論）</option>
+                </optgroup>
+                <optgroup label="GPT-3.5">
+                  <option value="gpt-3.5-turbo" ${state.model === 'gpt-3.5-turbo' ? 'selected' : ''}>gpt-3.5-turbo（低コスト）</option>
+                </optgroup>
+                <optgroup label="カスタム">
+                  <option value="custom" ${isCustomModel ? 'selected' : ''}>カスタムモデル名を入力...</option>
+                </optgroup>
+              </select>
+              <input id="modelCustom" type="text" 
+                value="${isCustomModel ? state.model : ''}"
+                class="w-full px-4 py-2 border border-gray-300 rounded-xl text-sm mt-2 ${isCustomModel ? '' : 'hidden'}"
+                placeholder="カスタムモデル名を入力">
             </div>
           </div>
 
@@ -248,7 +283,7 @@ function renderSetup() {
           ロープレを開始する
         </button>
         <p class="text-xs text-gray-400 mt-3">
-          ${!state.apiKey ? 'まずAPIキーを設定してください' : 'マイクへのアクセス許可が必要です'}
+          ${!state.apiKey ? 'まずAPIキーを設定してください' : 'マイクへのアクセス許可が必要です（Chrome推奨）'}
         </p>
       </div>
     </main>
@@ -259,7 +294,7 @@ function renderSetup() {
 window.saveApiSettings = () => {
   state.apiKey = document.getElementById('apiKey').value.trim();
   state.baseURL = document.getElementById('baseURL').value.trim() || 'https://api.openai.com/v1';
-  state.model = document.getElementById('model').value.trim() || 'gpt-4o';
+  state.model = getSelectedModel();
   state.apiConnected = false;
 
   localStorage.setItem('roleplay_apiKey', state.apiKey);
@@ -270,10 +305,33 @@ window.saveApiSettings = () => {
   showToast('設定を保存しました');
 };
 
+function getSelectedModel() {
+  const sel = document.getElementById('model');
+  if (!sel) return state.model;
+  const val = sel.value;
+  if (val === 'custom') {
+    const custom = document.getElementById('modelCustom');
+    return (custom && custom.value.trim()) || 'gpt-4o-mini';
+  }
+  return val;
+}
+
+// モデルselect変更時にカスタム入力を表示/非表示
+window.onModelSelectChange = () => {
+  const sel = document.getElementById('model');
+  const customInput = document.getElementById('modelCustom');
+  if (sel && customInput) {
+    customInput.classList.toggle('hidden', sel.value !== 'custom');
+    if (sel.value === 'custom') {
+      customInput.focus();
+    }
+  }
+};
+
 window.testConnection = async () => {
   const apiKey = document.getElementById('apiKey').value.trim();
   const baseURL = document.getElementById('baseURL').value.trim() || 'https://api.openai.com/v1';
-  const model = document.getElementById('model').value.trim() || 'gpt-4o';
+  const model = getSelectedModel();
 
   if (!apiKey) {
     showToast('APIキーを入力してください', 'error');
@@ -358,9 +416,11 @@ window.startRoleplay = () => {
   }
 
   state.messages = [];
+  state.turnCount = 0;
   state.currentScreen = 'roleplay';
   state.startTime = Date.now();
   state.elapsedSeconds = 0;
+  state.showTextInput = false;
   render();
   startTimer();
   generateAIFirstMessage();
@@ -390,7 +450,7 @@ function renderRoleplay() {
         </div>
         <div class="flex items-center gap-2 text-sm text-gray-500">
           <i class="fas fa-comments"></i>
-          <span>${state.messages.length}</span>
+          <span id="turnCount">${state.turnCount}</span>
         </div>
       </div>
     </header>
@@ -402,41 +462,14 @@ function renderRoleplay() {
     </div>
 
     <!-- 中間テキスト表示 -->
-    ${state.interimTranscript ? `
-      <div class="px-4 py-2 bg-blue-50 border-t border-blue-100 flex-shrink-0">
-        <p class="text-sm text-blue-600 italic">
-          <i class="fas fa-microphone text-blue-400 mr-1"></i>${state.interimTranscript}
-        </p>
-      </div>
-    ` : ''}
+    <div id="interimContainer" class="px-4 py-2 bg-blue-50 border-t border-blue-100 flex-shrink-0 ${state.interimTranscript ? '' : 'hidden'}">
+      ${state.interimTranscript ? `<p class="text-sm text-blue-600 italic"><i class="fas fa-microphone text-blue-400 mr-1"></i>${escapeHtml(state.interimTranscript)}</p>` : ''}
+    </div>
 
     <!-- 操作パネル -->
     <div class="bg-white border-t border-gray-200 px-4 py-4 flex-shrink-0">
-      <div class="text-center mb-3">
-        ${state.isListening ? `
-          <div class="flex items-center justify-center gap-2">
-            <div class="voice-wave voice-wave-red">
-              <div class="bar"></div><div class="bar"></div><div class="bar"></div>
-              <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
-            </div>
-            <span class="text-sm font-medium text-red-600">聞いています...</span>
-          </div>
-        ` : state.isSpeaking ? `
-          <div class="flex items-center justify-center gap-2">
-            <div class="voice-wave">
-              <div class="bar"></div><div class="bar"></div><div class="bar"></div>
-              <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
-            </div>
-            <span class="text-sm font-medium text-blue-600">AIが話しています...</span>
-          </div>
-        ` : state.isProcessing ? `
-          <div class="flex items-center justify-center gap-2">
-            <div class="animate-spin w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full"></div>
-            <span class="text-sm text-gray-500">考え中...</span>
-          </div>
-        ` : `
-          <p class="text-sm text-gray-400">マイクボタンを押して話してください</p>
-        `}
+      <div id="statusArea" class="text-center mb-3">
+        ${renderStatusText()}
       </div>
 
       <div class="flex items-center justify-center gap-4">
@@ -462,7 +495,7 @@ function renderRoleplay() {
         </button>
       </div>
 
-      <div id="textInputArea" class="hidden mt-4">
+      <div id="textInputArea" class="${state.showTextInput ? '' : 'hidden'} mt-4">
         <div class="flex gap-2">
           <input id="textInput" type="text" 
             class="flex-1 px-4 py-3 border border-gray-300 rounded-xl text-sm"
@@ -477,21 +510,40 @@ function renderRoleplay() {
   </div>`;
 }
 
+function renderStatusText() {
+  if (state.isListening) {
+    return `<div class="flex items-center justify-center gap-2"><div class="voice-wave voice-wave-red"><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><span class="text-sm font-medium text-red-600">聞いています...</span></div>`;
+  } else if (state.isProcessing) {
+    return `<div class="flex items-center justify-center gap-2"><div class="animate-spin w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full"></div><span class="text-sm text-gray-500">考え中...</span></div>`;
+  } else if (state.isSpeaking) {
+    return `<div class="flex items-center justify-center gap-2"><div class="voice-wave"><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div></div><span class="text-sm font-medium text-blue-600">顧客が話しています...</span></div>`;
+  } else {
+    return `<p class="text-sm text-gray-400">マイクボタンを押して話してください</p>`;
+  }
+}
+
 function renderChatBubble(msg, index) {
+  // user = 営業担当（あなた）, assistant = 顧客（AI）
   const isUser = msg.role === 'user';
   return `
     <div class="flex ${isUser ? 'justify-end' : 'justify-start'} fade-in">
       ${!isUser ? `
-        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center flex-shrink-0 mr-2 mt-1">
-          <i class="fas fa-user-tie text-white text-xs"></i>
+        <div class="flex flex-col items-center mr-2 mt-1 flex-shrink-0">
+          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center">
+            <i class="fas fa-user-tie text-white text-xs"></i>
+          </div>
+          <span class="text-[10px] text-gray-400 mt-0.5">顧客</span>
         </div>
       ` : ''}
       <div class="${isUser ? 'chat-bubble-user' : 'chat-bubble-ai'} px-4 py-3 max-w-[80%] shadow-sm">
         <p class="text-sm leading-relaxed whitespace-pre-wrap">${escapeHtml(msg.content)}</p>
       </div>
       ${isUser ? `
-        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center flex-shrink-0 ml-2 mt-1">
-          <i class="fas fa-user text-white text-xs"></i>
+        <div class="flex flex-col items-center ml-2 mt-1 flex-shrink-0">
+          <div class="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center">
+            <i class="fas fa-user text-white text-xs"></i>
+          </div>
+          <span class="text-[10px] text-gray-400 mt-0.5">あなた</span>
         </div>
       ` : ''}
     </div>`;
@@ -505,9 +557,12 @@ function escapeHtml(text) {
 
 function renderTypingIndicator() {
   return `
-    <div class="flex justify-start fade-in">
-      <div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center flex-shrink-0 mr-2 mt-1">
-        <i class="fas fa-user-tie text-white text-xs"></i>
+    <div class="flex justify-start fade-in" id="typingIndicator">
+      <div class="flex flex-col items-center mr-2 mt-1 flex-shrink-0">
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center">
+          <i class="fas fa-user-tie text-white text-xs"></i>
+        </div>
+        <span class="text-[10px] text-gray-400 mt-0.5">顧客</span>
       </div>
       <div class="chat-bubble-ai px-4 py-3 shadow-sm">
         <div class="flex gap-1">
@@ -532,24 +587,90 @@ function startTimer() {
   }, 1000);
 }
 
+// ============================================================
+// ロープレ画面の部分的DOM更新（render()を呼ばず特定要素だけ更新）
+// ============================================================
+
+// チャットエリアに新しいメッセージを追加（DOM全体を壊さない）
+function appendChatBubble(msg) {
+  const chatArea = document.getElementById('chatArea');
+  if (!chatArea) return;
+  
+  // タイピングインジケーターを除去
+  const typing = document.getElementById('typingIndicator');
+  if (typing) typing.remove();
+  
+  const index = state.messages.length - 1;
+  const div = document.createElement('div');
+  div.innerHTML = renderChatBubble(msg, index);
+  chatArea.appendChild(div.firstElementChild);
+  scrollChatToBottom();
+}
+
+// タイピングインジケーターの表示/非表示
+function showTypingIndicator() {
+  const chatArea = document.getElementById('chatArea');
+  if (!chatArea || document.getElementById('typingIndicator')) return;
+  const div = document.createElement('div');
+  div.innerHTML = renderTypingIndicator();
+  chatArea.appendChild(div.firstElementChild);
+  scrollChatToBottom();
+}
+
+function hideTypingIndicator() {
+  const typing = document.getElementById('typingIndicator');
+  if (typing) typing.remove();
+}
+
+// ステータスエリアの更新
+function updateStatusArea() {
+  const statusArea = document.getElementById('statusArea');
+  if (statusArea) {
+    statusArea.innerHTML = renderStatusText();
+  }
+}
+
+// マイクボタンUI更新
+function updateMicUI() {
+  const micBtn = document.getElementById('micBtn');
+  if (micBtn) {
+    if (state.isListening) {
+      micBtn.className = 'w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center shadow-lg transition-all relative';
+      micBtn.innerHTML = '<div class="absolute inset-0 rounded-full bg-red-400 pulse-ring"></div><i class="fas fa-stop text-xl relative z-10"></i>';
+      micBtn.disabled = false;
+    } else {
+      micBtn.className = 'w-16 h-16 rounded-full btn-primary text-white flex items-center justify-center shadow-lg transition-all relative';
+      micBtn.innerHTML = '<i class="fas fa-microphone text-xl"></i>';
+      micBtn.disabled = state.isProcessing || state.isSpeaking;
+    }
+  }
+  updateStatusArea();
+}
+
+// ターンカウントの更新
+function updateTurnCount() {
+  const el = document.getElementById('turnCount');
+  if (el) el.textContent = state.turnCount;
+}
+
 // ===== AI第一声 =====
 async function generateAIFirstMessage() {
   state.isProcessing = true;
-  render();
-
-  const firstMsg = { role: 'user', content: '（営業担当が訪問/電話してきました。顧客として最初の反応をしてください。）' };
+  showTypingIndicator();
+  updateMicUI();
 
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: [firstMsg],
+        messages: [],
         scenario: state.scenario,
         persona: state.persona,
         apiKey: state.apiKey,
         baseURL: state.baseURL,
         model: state.model,
+        isFirstMessage: true,
       }),
     });
 
@@ -561,14 +682,20 @@ async function generateAIFirstMessage() {
     const text = await readStream(response);
     state.messages.push({ role: 'assistant', content: text });
     state.isProcessing = false;
-    render();
+    hideTypingIndicator();
+    appendChatBubble(state.messages[state.messages.length - 1]);
+    updateMicUI();
     if (state.autoSpeak) speak(text);
   } catch (e) {
     console.error('AI first message error:', e);
     state.isProcessing = false;
-    state.messages.push({ role: 'assistant', content: 'はい、どちらさまでしょうか？' });
-    render();
-    showToast(`AIエラー: ${e.message}`, 'error');
+    const fallback = 'はい、どちらさまでしょうか？';
+    state.messages.push({ role: 'assistant', content: fallback });
+    hideTypingIndicator();
+    appendChatBubble(state.messages[state.messages.length - 1]);
+    updateMicUI();
+    if (state.autoSpeak) speak(fallback);
+    if (e.message) showToast(`AIエラー: ${e.message}`, 'error');
   }
 }
 
@@ -585,28 +712,65 @@ async function readStream(response) {
   return text.trim();
 }
 
-// ===== 音声認識 =====
+// ============================================================
+// 音声認識（マイク）- 改善版
+// ============================================================
 window.toggleListening = () => {
   if (state.isListening) stopListening();
   else startListening();
 };
 
+function checkSpeechRecognitionSupport() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    showToast('お使いのブラウザは音声認識に対応していません。Google Chrome をお使いください。', 'error');
+    return null;
+  }
+  return SpeechRecognition;
+}
+
 function startListening() {
+  // 話し中・処理中は開始しない
+  if (state.isSpeaking || state.isProcessing) return;
+  
+  // 音声合成を停止
   state.synthesis.cancel();
   state.isSpeaking = false;
 
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRecognition) {
-    showToast('お使いのブラウザは音声認識に対応していません。Chromeをお使いください。', 'error');
-    return;
+  const SpeechRecognition = checkSpeechRecognitionSupport();
+  if (!SpeechRecognition) return;
+
+  // 既存の認識インスタンスを破棄
+  if (state.recognition) {
+    try { state.recognition.abort(); } catch(e) {}
+    state.recognition = null;
   }
 
   const recognition = new SpeechRecognition();
   recognition.lang = 'ja-JP';
-  recognition.continuous = true;
+  recognition.continuous = true;    // 継続的に認識
   recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
 
   let finalTranscript = '';
+  let silenceTimer = null;
+
+  // 無音検出: 最終結果が出てから2秒間沈黙したら送信
+  function resetSilenceTimer() {
+    if (silenceTimer) clearTimeout(silenceTimer);
+    if (finalTranscript.trim()) {
+      silenceTimer = setTimeout(() => {
+        if (state.isListening && finalTranscript.trim()) {
+          const textToSend = finalTranscript.trim();
+          finalTranscript = '';
+          updateInterimDisplay('');
+          // 一度リスニングを止めて送信、AI応答後に再開
+          pauseListeningForResponse();
+          sendMessage(textToSend);
+        }
+      }, 2000);
+    }
+  }
 
   recognition.onresult = (event) => {
     let interim = '';
@@ -614,32 +778,49 @@ function startListening() {
       const transcript = event.results[i][0].transcript;
       if (event.results[i].isFinal) {
         finalTranscript += transcript;
+        resetSilenceTimer();
       } else {
         interim += transcript;
       }
     }
-    state.interimTranscript = interim;
-    render();
+    updateInterimDisplay(interim || finalTranscript);
   };
 
   recognition.onerror = (event) => {
-    console.error('Speech recognition error:', event.error);
-    if (event.error !== 'no-speech' && event.error !== 'aborted') {
-      showToast(`音声認識エラー: ${event.error}`, 'error');
+    console.warn('Speech recognition error:', event.error);
+    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+      showToast('マイクへのアクセスが許可されていません。ブラウザの設定からマイク許可を確認してください。', 'error');
+      state.isListening = false;
+      state.recognition = null;
+      updateMicUI();
+    } else if (event.error === 'no-speech') {
+      // 無音の場合は何もしない（onendで再スタートする）
+    } else if (event.error === 'network') {
+      showToast('音声認識のネットワークエラー。インターネット接続を確認してください。', 'error');
+    } else if (event.error !== 'aborted') {
+      console.warn(`音声認識エラー: ${event.error}`);
     }
   };
 
   recognition.onend = () => {
-    if (state.isListening) {
-      // ユーザーが停止した場合、最終テキストを送信
-      if (finalTranscript.trim()) {
-        sendMessage(finalTranscript.trim());
-        finalTranscript = '';
+    // まだリスニング状態のはず → 自動再起動
+    if (state.isListening && !state.isProcessing && !state.isSpeaking) {
+      try {
+        recognition.start();
+      } catch(e) {
+        console.warn('Failed to restart recognition:', e);
+        // 少し待ってからリトライ
+        setTimeout(() => {
+          if (state.isListening) {
+            try { recognition.start(); } catch(e2) {
+              state.isListening = false;
+              state.recognition = null;
+              updateMicUI();
+              showToast('音声認識が停止しました。マイクボタンで再開してください。', 'error');
+            }
+          }
+        }, 500);
       }
-      state.isListening = false;
-      state.interimTranscript = '';
-      state.recognition = null;
-      render();
     }
   };
 
@@ -648,27 +829,139 @@ function startListening() {
     state.recognition = recognition;
     state.isListening = true;
     finalTranscript = '';
-    render();
+    updateMicUI();
   } catch (e) {
     console.error('Failed to start recognition:', e);
-    showToast('マイクの起動に失敗しました', 'error');
+    showToast('マイクの起動に失敗しました。ブラウザの設定を確認してください。', 'error');
   }
 }
 
 function stopListening() {
+  state.isListening = false;
   if (state.recognition) {
-    state.recognition.stop();
-    // onend で処理される
+    try { state.recognition.abort(); } catch(e) {}
+    state.recognition = null;
+  }
+  state.interimTranscript = '';
+  updateMicUI();
+  updateInterimDisplay('');
+}
+
+// AI応答中はリスニングを一時停止
+function pauseListeningForResponse() {
+  if (state.recognition) {
+    try { state.recognition.abort(); } catch(e) {}
+    state.recognition = null;
+  }
+  // isListening は true のまま → AI応答後に再開
+}
+
+// AI応答後にリスニングを再開
+function resumeListeningAfterResponse() {
+  if (state.isListening && !state.recognition && !state.isSpeaking && !state.isProcessing) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+    
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'ja-JP';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    let finalTranscript = '';
+    let silenceTimer = null;
+
+    function resetSilenceTimer() {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      if (finalTranscript.trim()) {
+        silenceTimer = setTimeout(() => {
+          if (state.isListening && finalTranscript.trim()) {
+            const textToSend = finalTranscript.trim();
+            finalTranscript = '';
+            updateInterimDisplay('');
+            pauseListeningForResponse();
+            sendMessage(textToSend);
+          }
+        }, 2000);
+      }
+    }
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript;
+          resetSilenceTimer();
+        } else {
+          interim += transcript;
+        }
+      }
+      updateInterimDisplay(interim || finalTranscript);
+    };
+
+    recognition.onerror = (event) => {
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        state.isListening = false;
+        state.recognition = null;
+        updateMicUI();
+      }
+    };
+
+    recognition.onend = () => {
+      if (state.isListening && !state.isProcessing && !state.isSpeaking) {
+        try { recognition.start(); } catch(e) {
+          setTimeout(() => {
+            if (state.isListening) {
+              try { recognition.start(); } catch(e2) {
+                state.isListening = false;
+                state.recognition = null;
+                updateMicUI();
+              }
+            }
+          }, 500);
+        }
+      }
+    };
+
+    try {
+      recognition.start();
+      state.recognition = recognition;
+    } catch(e) {
+      console.warn('Resume recognition failed:', e);
+    }
   }
 }
 
-// ===== メッセージ送信 =====
+// DOM部分更新: 中間テキスト表示
+function updateInterimDisplay(text) {
+  state.interimTranscript = text;
+  const container = document.getElementById('interimContainer');
+  if (container) {
+    if (text) {
+      container.innerHTML = `<p class="text-sm text-blue-600 italic"><i class="fas fa-microphone text-blue-400 mr-1"></i>${escapeHtml(text)}</p>`;
+      container.classList.remove('hidden');
+    } else {
+      container.innerHTML = '';
+      container.classList.add('hidden');
+    }
+  }
+}
+
+// ===== メッセージ送信（DOM部分更新版） =====
 async function sendMessage(text) {
   if (!text.trim() || state.isProcessing) return;
 
+  // ユーザーメッセージを追加
   state.messages.push({ role: 'user', content: text.trim() });
+  state.turnCount++;
   state.isProcessing = true;
-  render();
+  
+  // 部分更新: チャットにユーザーバブルを追加
+  appendChatBubble(state.messages[state.messages.length - 1]);
+  showTypingIndicator();
+  updateMicUI();
+  updateTurnCount();
 
   try {
     const response = await fetch('/api/chat', {
@@ -692,22 +985,37 @@ async function sendMessage(text) {
     const aiText = await readStream(response);
     state.messages.push({ role: 'assistant', content: aiText });
     state.isProcessing = false;
-    render();
-    if (state.autoSpeak) speak(aiText);
+    
+    // 部分更新: チャットにAIバブルを追加
+    hideTypingIndicator();
+    appendChatBubble(state.messages[state.messages.length - 1]);
+    updateMicUI();
+    
+    if (state.autoSpeak) {
+      speak(aiText, () => {
+        // 音声読み上げ完了後、リスニング再開
+        resumeListeningAfterResponse();
+      });
+    } else {
+      resumeListeningAfterResponse();
+    }
   } catch (e) {
     console.error('Chat error:', e);
     state.isProcessing = false;
-    render();
+    hideTypingIndicator();
+    updateMicUI();
     showToast(`エラー: ${e.message}`, 'error');
+    resumeListeningAfterResponse();
   }
 }
 
 // ===== テキスト入力 =====
 window.toggleTextInput = () => {
+  state.showTextInput = !state.showTextInput;
   const area = document.getElementById('textInputArea');
   if (area) {
-    area.classList.toggle('hidden');
-    if (!area.classList.contains('hidden')) {
+    area.classList.toggle('hidden', !state.showTextInput);
+    if (state.showTextInput) {
       document.getElementById('textInput')?.focus();
     }
   }
@@ -722,7 +1030,7 @@ window.sendText = () => {
 };
 
 // ===== 音声合成 =====
-function speak(text) {
+function speak(text, onComplete) {
   state.synthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'ja-JP';
@@ -730,9 +1038,9 @@ function speak(text) {
   utterance.pitch = 1.0;
   if (state.selectedVoice) utterance.voice = state.selectedVoice;
 
-  utterance.onstart = () => { state.isSpeaking = true; render(); };
-  utterance.onend = () => { state.isSpeaking = false; render(); };
-  utterance.onerror = () => { state.isSpeaking = false; render(); };
+  utterance.onstart = () => { state.isSpeaking = true; updateMicUI(); };
+  utterance.onend = () => { state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
+  utterance.onerror = () => { state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
 
   state.synthesis.speak(utterance);
 }
@@ -868,7 +1176,7 @@ function renderFeedback() {
                 <i class="fas fa-clock mr-1"></i>${minutes}分${seconds}秒
               </span>
               <span class="text-xs bg-purple-50 text-purple-700 px-3 py-1 rounded-full">
-                <i class="fas fa-comments mr-1"></i>${state.messages.length}ターン
+                <i class="fas fa-comments mr-1"></i>${state.turnCount}ターン
               </span>
             </div>
           </div>
@@ -950,7 +1258,7 @@ function renderFeedback() {
           <div class="mt-4 space-y-3 max-h-96 overflow-y-auto chat-scroll">
             ${state.messages.map(m => `
               <div class="flex items-start gap-2 text-sm ${m.role === 'user' ? 'text-blue-700' : 'text-gray-700'}">
-                <span class="font-bold flex-shrink-0">${m.role === 'user' ? '営業：' : '顧客：'}</span>
+                <span class="font-bold flex-shrink-0">${m.role === 'user' ? '営業（あなた）：' : '顧客（AI）：'}</span>
                 <span>${escapeHtml(m.content)}</span>
               </div>
             `).join('')}
@@ -976,5 +1284,6 @@ window.backToSetup = () => {
   state.isProcessing = false;
   state.isSpeaking = false;
   state.isListening = false;
+  state.turnCount = 0;
   render();
 };
