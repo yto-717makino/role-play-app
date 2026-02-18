@@ -61,13 +61,13 @@ app.use((req, res, next) => {
 // ============================
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, scenario, persona, apiKey, baseURL, model, isFirstMessage } = req.body;
+    const { messages, scenario, persona, apiKey, baseURL, model, isFirstMessage, productURL, goal } = req.body;
     
     if (!apiKey) {
       return res.status(400).json({ error: 'APIキーが設定されていません' });
     }
 
-    const systemPrompt = buildSystemPrompt(scenario, persona);
+    const systemPrompt = buildSystemPrompt(scenario, persona, productURL, goal);
     const allMessages = [
       { role: 'system', content: systemPrompt },
     ];
@@ -147,7 +147,7 @@ app.post('/api/chat', async (req, res) => {
 // ============================
 app.post('/api/feedback', async (req, res) => {
   try {
-    const { messages, scenario, persona, criteria, apiKey, baseURL, model } = req.body;
+    const { messages, scenario, persona, criteria, apiKey, baseURL, model, productURL, goal } = req.body;
 
     if (!apiKey) {
       return res.status(400).json({ error: 'APIキーが設定されていません' });
@@ -165,6 +165,8 @@ ${scenario}
 
 ## 顧客ペルソナ
 ${persona}
+${productURL ? `\n## 提案商品/サービスURL\n${productURL}` : ''}
+${goal ? `\n## 営業のゴール設定\n${goal}` : ''}
 
 ## 評価基準
 ${criteria}
@@ -265,6 +267,75 @@ app.post('/api/test-connection', async (req, res) => {
 });
 
 // ============================
+// API: TTS（テキスト→音声変換）
+// ============================
+app.post('/api/tts', async (req, res) => {
+  try {
+    const { text, apiKey, baseURL, voice, instructions } = req.body;
+
+    if (!apiKey) {
+      return res.status(400).json({ error: 'APIキーが設定されていません' });
+    }
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: 'テキストが空です' });
+    }
+
+    const ttsBaseURL = (baseURL || DEFAULT_BASE_URL).replace(/\/+$/, '');
+    const url = `${ttsBaseURL}/audio/speech`;
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    };
+    const routeId = process.env.GENSPARK_ROUTE_IDENTIFIER || '';
+    if (routeId) headers['X-Route-ID'] = routeId;
+
+    const body = {
+      model: 'gpt-4o-mini-tts',
+      input: text,
+      voice: voice || 'coral',
+      response_format: 'mp3',
+    };
+    // instructions でトーンを制御（gpt-4o-mini-ttsのみ）
+    if (instructions) body.instructions = instructions;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`TTS API error ${response.status}: ${errText}`);
+      return res.status(response.status).json({ error: `TTS API エラー (${response.status})` });
+    }
+
+    // 音声バイナリをそのままプロキシ
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-cache');
+
+    const reader = response.body.getReader();
+    const pump = async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        res.write(value);
+      }
+      res.end();
+    };
+    pump().catch(err => {
+      console.error('TTS stream error:', err);
+      res.end();
+    });
+
+  } catch (e) {
+    console.error('TTS API error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================
 // 静的ファイル配信
 // ============================
 const publicDir = resolve(import.meta.dirname, 'public');
@@ -289,8 +360,8 @@ server.listen(PORT, '0.0.0.0', () => {
 // ============================
 // システムプロンプト構築
 // ============================
-function buildSystemPrompt(scenario, persona) {
-  return `あなたは営業ロールプレイングの練習相手として「顧客役」を演じてください。
+function buildSystemPrompt(scenario, persona, productURL, goal) {
+  let prompt = `あなたは営業ロールプレイングの練習相手として「顧客役」を演じてください。
 この会話では、あなた(assistant)＝顧客、相手(user)＝営業担当者です。
 あなたは絶対に営業担当者の立場で話してはいけません。常に顧客としてのみ発言してください。
 
@@ -298,7 +369,25 @@ function buildSystemPrompt(scenario, persona) {
 ${scenario}
 
 ## あなたが演じる顧客のペルソナ
-${persona}
+${persona}`;
+
+  if (productURL) {
+    prompt += `
+
+## 営業担当が提案する商品/サービス
+参考URL: ${productURL}
+※営業担当がこのサービスについて説明してくるかもしれません。顧客として内容について質問したり、疑問を投げかけてください。`;
+  }
+
+  if (goal) {
+    prompt += `
+
+## このロープレのゴール設定（営業担当の目標）
+${goal}
+※これは営業担当の目標です。あなたは顧客なので、簡単にはこの目標を達成させないでください。ただし良い提案をされたら段階的に前向きになってください。`;
+  }
+
+  prompt += `
 
 ## 重要なルール
 - 必ず日本語で応答してください
@@ -311,6 +400,8 @@ ${persona}
 - 「AI」「ロールプレイ」「シミュレーション」などメタ的な発言は一切しないでください
 - あくまで本物の顧客として振る舞い続けてください
 - 自己紹介する際はペルソナに記載されている名前・肩書きを使ってください`;
+
+  return prompt;
 }
 
 // ============================
