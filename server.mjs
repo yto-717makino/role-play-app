@@ -1,4 +1,4 @@
-// Node.js プロキシサーバー
+// Node.js プロキシサーバー — OpenAI Responses API 対応
 // フロントエンドからAPIキーを受け取ってLLM APIを呼び出す
 import express from 'express';
 import { createServer } from 'http';
@@ -8,33 +8,48 @@ const app = express();
 app.use(express.json({ limit: '10mb' }));
 
 // ============================
-// デフォルト設定（環境変数またはユーザー入力）
+// デフォルト設定
 // ============================
 const DEFAULT_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-const DEFAULT_MODEL = 'gpt-4o';
+const DEFAULT_MODEL = 'gpt-5.2';
 
 // ============================
-// LLM API 呼び出し
+// Responses API 呼び出し（非ストリーミング）
 // ============================
-async function callLLM(apiKey, baseURL, model, messages, options = {}) {
-  const url = `${baseURL}/chat/completions`;
+async function callResponsesAPI(apiKey, baseURL, model, input, options = {}) {
+  const url = `${(baseURL || DEFAULT_BASE_URL).replace(/\/+$/, '')}/responses`;
 
   const headers = {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${apiKey}`,
   };
-
-  // GenSpark 固有ヘッダー (あれば)
   const routeId = process.env.GENSPARK_ROUTE_IDENTIFIER || '';
   if (routeId) headers['X-Route-ID'] = routeId;
 
   const body = {
     model: model || DEFAULT_MODEL,
-    messages,
-    temperature: options.temperature ?? 0.8,
-    max_tokens: options.max_tokens ?? 500,
+    input,
+    store: false,
     stream: options.stream ?? false,
   };
+
+  // instructions (system prompt)
+  if (options.instructions) {
+    body.instructions = options.instructions;
+  }
+
+  // reasoning effort — デフォルト none (GPT-5.2推奨)
+  body.reasoning = { effort: options.reasoningEffort ?? 'none' };
+
+  // temperature は reasoning effort が none の場合のみ有効
+  if ((options.reasoningEffort ?? 'none') === 'none' && options.temperature !== undefined) {
+    body.temperature = options.temperature;
+  }
+
+  // max_output_tokens
+  if (options.max_output_tokens) {
+    body.max_output_tokens = options.max_output_tokens;
+  }
 
   const response = await fetch(url, {
     method: 'POST',
@@ -43,6 +58,21 @@ async function callLLM(apiKey, baseURL, model, messages, options = {}) {
   });
 
   return response;
+}
+
+// ============================
+// Responses API からテキスト抽出（非ストリーミング）
+// ============================
+function extractTextFromResponse(responseData) {
+  if (!responseData?.output) return '';
+  for (const item of responseData.output) {
+    if (item.type === 'message' && item.content) {
+      for (const c of item.content) {
+        if (c.type === 'output_text' && c.text) return c.text;
+      }
+    }
+  }
+  return responseData.output_text || '';
 }
 
 // ============================
@@ -57,48 +87,57 @@ app.use((req, res, next) => {
 });
 
 // ============================
-// API: 会話 (ストリーミング)
+// API: 会話 (ストリーミング — Responses API SSE)
 // ============================
 app.post('/api/chat', async (req, res) => {
   try {
     const { messages, scenario, persona, apiKey, baseURL, model, isFirstMessage, productURL, goal } = req.body;
-    
+
     if (!apiKey) {
       return res.status(400).json({ error: 'APIキーが設定されていません' });
     }
 
     const systemPrompt = buildSystemPrompt(scenario, persona, productURL, goal);
-    const allMessages = [
-      { role: 'system', content: systemPrompt },
-    ];
+
+    // Responses API の input を構築
+    // role: developer(=system), user, assistant
+    const input = [];
 
     if (isFirstMessage) {
       // 最初のメッセージ: AIが顧客として第一声を出す
-      // 会話の中でAI=assistant=顧客役、user=営業担当
-      allMessages.push({
+      input.push({
         role: 'user',
         content: '（営業担当がお客様のオフィスに到着し、受付を通って会議室に案内されました。お客様が会議室に入ってきます。お客様として最初の一言をお願いします。簡潔に挨拶してください。）'
       });
     } else {
       // 通常の会話: フロントエンドの messages をそのまま使う
       // user = 営業担当の発言、assistant = 顧客(AI)の発言
-      allMessages.push(...messages.map(m => ({ role: m.role, content: m.content })));
+      for (const m of messages) {
+        input.push({ role: m.role, content: m.content });
+      }
     }
 
-    const response = await callLLM(
+    const response = await callResponsesAPI(
       apiKey,
       baseURL || DEFAULT_BASE_URL,
       model || DEFAULT_MODEL,
-      allMessages,
-      { stream: true, temperature: 0.8, max_tokens: 500 }
+      input,
+      {
+        stream: true,
+        instructions: systemPrompt,
+        reasoningEffort: 'none',
+        temperature: 0.8,
+        max_output_tokens: 500,
+      }
     );
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error(`LLM API error ${response.status}: ${errText}`);
+      console.error(`Responses API error ${response.status}: ${errText}`);
       return res.status(response.status).json({ error: `API エラー (${response.status}): ${errText}` });
     }
 
+    // SSE ストリーミング: event: response.output_text.delta → data: {"delta":"..."}
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Transfer-Encoding', 'chunked');
     res.setHeader('Cache-Control', 'no-cache');
@@ -116,15 +155,23 @@ app.post('/api/chat', async (req, res) => {
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
+        let currentEventType = null;
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6).trim();
-            if (data === '[DONE]') continue;
-            try {
-              const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content || '';
-              if (content) res.write(content);
-            } catch {}
+          if (line.startsWith('event:')) {
+            currentEventType = line.slice(6).trim();
+          } else if (line.startsWith('data:')) {
+            const dataStr = line.slice(5).trim();
+            if (!dataStr || dataStr === '[DONE]') continue;
+
+            // テキストデルタのみ抽出
+            if (currentEventType === 'response.output_text.delta') {
+              try {
+                const parsed = JSON.parse(dataStr);
+                const delta = parsed.delta || '';
+                if (delta) res.write(delta);
+              } catch {}
+            }
+            currentEventType = null; // reset after processing data
           }
         }
       }
@@ -143,7 +190,7 @@ app.post('/api/chat', async (req, res) => {
 });
 
 // ============================
-// API: フィードバック生成
+// API: フィードバック生成（非ストリーミング）
 // ============================
 app.post('/api/feedback', async (req, res) => {
   try {
@@ -192,12 +239,17 @@ ${conversationLog}
   "modelAnswer": "<この場面での模範的な対応例（3-5文）>"
 }`;
 
-    const response = await callLLM(
+    const response = await callResponsesAPI(
       apiKey,
       baseURL || DEFAULT_BASE_URL,
       model || DEFAULT_MODEL,
       [{ role: 'user', content: feedbackPrompt }],
-      { stream: false, temperature: 0.4, max_tokens: 2000 }
+      {
+        stream: false,
+        reasoningEffort: 'none',
+        temperature: 0.4,
+        max_output_tokens: 2000,
+      }
     );
 
     if (!response.ok) {
@@ -206,7 +258,7 @@ ${conversationLog}
     }
 
     const result = await response.json();
-    const content = result.choices?.[0]?.message?.content || '{}';
+    const content = extractTextFromResponse(result);
 
     try {
       const feedback = JSON.parse(content);
@@ -240,17 +292,22 @@ ${conversationLog}
 app.post('/api/test-connection', async (req, res) => {
   try {
     const { apiKey, baseURL, model } = req.body;
-    
+
     if (!apiKey) {
       return res.status(400).json({ error: 'APIキーが設定されていません' });
     }
 
-    const response = await callLLM(
+    const response = await callResponsesAPI(
       apiKey,
       baseURL || DEFAULT_BASE_URL,
       model || DEFAULT_MODEL,
       [{ role: 'user', content: 'テスト。「接続成功」とだけ返答してください。' }],
-      { stream: false, temperature: 0, max_tokens: 20 }
+      {
+        stream: false,
+        reasoningEffort: 'none',
+        temperature: 0,
+        max_output_tokens: 20,
+      }
     );
 
     if (!response.ok) {
@@ -259,7 +316,7 @@ app.post('/api/test-connection', async (req, res) => {
     }
 
     const result = await response.json();
-    const content = result.choices?.[0]?.message?.content || '';
+    const content = extractTextFromResponse(result);
     return res.json({ success: true, message: content, model: result.model });
   } catch (e) {
     return res.status(500).json({ success: false, error: e.message });
@@ -296,7 +353,6 @@ app.post('/api/tts', async (req, res) => {
       voice: voice || 'coral',
       response_format: 'mp3',
     };
-    // instructions でトーンを制御（gpt-4o-mini-ttsのみ）
     if (instructions) body.instructions = instructions;
 
     const response = await fetch(url, {
@@ -311,7 +367,6 @@ app.post('/api/tts', async (req, res) => {
       return res.status(response.status).json({ error: `TTS API エラー (${response.status})` });
     }
 
-    // 音声バイナリをそのままプロキシ
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Cache-Control', 'no-cache');
 
@@ -355,6 +410,8 @@ const PORT = process.env.PORT || 3000;
 const server = createServer(app);
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`AI営業ロープレ サーバー起動: http://0.0.0.0:${PORT}`);
+  console.log(`API: Responses API (POST /v1/responses)`);
+  console.log(`Default model: ${DEFAULT_MODEL}`);
 });
 
 // ============================
@@ -399,7 +456,7 @@ ${goal}
 - 感情的な反応も適度に入れてください（興味、疑問、不安など）
 - 「AI」「ロールプレイ」「シミュレーション」などメタ的な発言は一切しないでください
 - あくまで本物の顧客として振る舞い続けてください
-- 自己紹介する際はペルソナに記載されている名前・肩書きを使ってください`;
+- 自己紹介する時はペルソナに記載されている名前・肩書きを使ってください`;
 
   return prompt;
 }

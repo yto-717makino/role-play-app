@@ -8,7 +8,7 @@ const state = {
   // API設定
   apiKey: localStorage.getItem('roleplay_apiKey') || '',
   baseURL: localStorage.getItem('roleplay_baseURL') || 'https://api.openai.com/v1',
-  model: localStorage.getItem('roleplay_model') || 'gpt-4o-mini',
+  model: localStorage.getItem('roleplay_model') || 'gpt-5.2',
   apiConnected: false,
   // 設定
   scenario: '',
@@ -45,7 +45,9 @@ const state = {
 
 // ===== 既知モデル一覧 =====
 const KNOWN_MODELS = [
-  'gpt-5.2', 'gpt-5.2-pro', 'gpt-5.1', 'gpt-5', 'gpt-5-mini', 'gpt-5-nano',
+  'gpt-5.2', 'gpt-5.2-pro',
+  'gpt-5.1',
+  'gpt-5', 'gpt-5-mini', 'gpt-5-nano',
   'gpt-4o', 'gpt-4o-mini',
   'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano',
   'o4-mini', 'o3', 'o3-pro', 'o3-mini',
@@ -140,7 +142,7 @@ function renderSetup() {
       ? '<span class="text-yellow-600 text-sm font-medium"><i class="fas fa-exclamation-circle mr-1"></i>未テスト</span>'
       : '<span class="text-red-600 text-sm font-medium"><i class="fas fa-times-circle mr-1"></i>未設定</span>';
 
-  const isCustomModel = !KNOWN_MODELS.includes(state.model) && state.model !== 'gpt-4o-mini';
+  const isCustomModel = !KNOWN_MODELS.includes(state.model);
 
   return `
   <div class="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
@@ -172,7 +174,7 @@ function renderSetup() {
             <input id="apiKey" type="password" value="${state.apiKey}"
               class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm"
               placeholder="sk-... または APIキーを入力">
-            <p class="text-xs text-gray-400 mt-1">OpenAI API や互換サービスのAPIキーを入力してください。</p>
+            <p class="text-xs text-gray-400 mt-1">OpenAI API キーを入力してください（Responses API 使用）</p>
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">

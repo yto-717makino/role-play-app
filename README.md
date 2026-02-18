@@ -3,14 +3,15 @@
 ## Project Overview
 - **Name**: AI営業ロープレ
 - **Goal**: AIと対話しながら営業スキルを磨くためのWebアプリケーション
-- **Features**: 音声/テキスト対話、高品質TTS、シナリオ設定、テンプレート管理、リアルタイム会話、AIフィードバック、最新モデル選択
+- **API**: **OpenAI Responses API** (`POST /v1/responses`) — 最新の推奨API
+- **Default Model**: **gpt-5.2** (reasoning_effort: none)
 
 ## 主な機能
 
 ### 1. ロープレ設定画面
-- OpenAI互換APIキー・ベースURL・モデルを自由に設定
+- OpenAI APIキー・ベースURL・モデルを自由に設定
 - **GPTモデルをドロップダウンから選択可能**
-  - GPT-5.2系（gpt-5.2, gpt-5.2-pro）
+  - GPT-5.2系（gpt-5.2, gpt-5.2-pro） — 最新フラッグシップ
   - GPT-5.1系（gpt-5.1）
   - GPT-5系（gpt-5, gpt-5-mini, gpt-5-nano）
   - GPT-4o系（gpt-4o, gpt-4o-mini）
@@ -25,68 +26,90 @@
 - 評価基準を事前に設定
 - プリセットシナリオ3種（新規法人開拓、既存顧客アップセル、クレーム対応）
 - **テンプレート保存/読み込み/削除**（設定をlocalStorageに保存）
-- AIの音声読み上げON/OFF切替
 
 ### 2. 音声設定
 - **OpenAI TTS API（推奨）**: gpt-4o-mini-tts による高品質な自然音声
-  - 12種類のボイス選択（coral, sage, alloy, ash, ballad, echo, fable, nova, onyx, shimmer, marin, cedar）
-  - 自然な抑揚と感情のある読み上げ
+  - 12種類のボイス選択
   - API失敗時はブラウザTTSに自動フォールバック
-- **ブラウザ音声**: ブラウザ内蔵の音声合成（無料・機械的）
+- **ブラウザ音声**: ブラウザ内蔵の音声合成（無料）
 
 ### 3. リアルタイム音声会話
 - Web Speech API による音声認識（日本語対応）
-- **continuous mode + 無音検出（2秒）** で自然な会話テンポ
-- **DOM部分更新方式** によりマイク認識が途切れない
-- リアルタイムの中間テキスト表示
-- AIの応答を音声合成で読み上げ（読み上げ完了後に自動リスニング再開）
-- テキスト入力モードも切替可能
-- ストリーミングレスポンスで高速応答
-- 経過時間・ターン数の表示
+- continuous mode + 無音検出（2秒）で自然な会話テンポ
+- DOM部分更新方式によりマイク認識が途切れない
+- ストリーミングレスポンス（Responses API SSEイベント）で高速応答
 
 ### 4. AI顧客役
-- **AIは「顧客」として一貫して応答** （営業担当にはならない）
-- システムプロンプトで役割を明確に指示
-- 最初のメッセージでAIが顧客として挨拶を開始
-- チャットバブルに「顧客」「あなた」ラベル付き
+- AIは「顧客」として一貫して応答
+- `instructions` パラメータでシステムプロンプトを設定（Responses API方式）
 - 商品URLやゴール設定をAIが理解して会話に反映
 
 ### 5. テンプレート管理
-- ロープレ設定（シナリオ・ペルソナ・評価基準・商品URL・ゴール）をテンプレートとして保存
-- 保存済みテンプレートの一覧表示（URL付き・目標付きのバッジ表示）
-- テンプレートの読み込み・削除
-- 保存日時の表示
+- ロープレ設定をテンプレートとして保存・読み込み・削除
+- URL付き・目標付きのバッジ表示、保存日時表示
 
 ### 6. フィードバック
-- 総合スコア（100点満点）
-- 項目別評価（各10点満点のバースコア）
-- 良かった点のリスト
-- 改善ポイントのリスト
-- 模範的な対応例
-- ゴール達成度の表示
-- 会話ログの閲覧（「営業（あなた）」「顧客（AI）」で明確に区別）
+- 総合スコア（100点満点）、項目別評価
+- 良かった点・改善ポイント・模範的な対応例
+- 会話ログの閲覧
 
 ## 技術スタック
 - **バックエンド**: Node.js + Express（APIプロキシサーバー）
 - **フロントエンド**: Vanilla JS + Tailwind CSS (CDN) + FontAwesome
-- **AI対話**: OpenAI API互換（ストリーミング対応）
+- **AI API**: **OpenAI Responses API** (`POST /v1/responses`)
+  - ストリーミング: SSE (`response.output_text.delta` イベント)
+  - パラメータ: `reasoning.effort: "none"`, `store: false`
+  - `instructions` でシステムプロンプトを分離
 - **音声認識**: Web Speech API (SpeechRecognition)
-- **音声合成**: OpenAI TTS API (gpt-4o-mini-tts) + ブラウザ SpeechSynthesis（フォールバック）
+- **音声合成**: OpenAI TTS API (gpt-4o-mini-tts) + ブラウザ SpeechSynthesis
 
-## API設定
-ユーザーがブラウザ上でAPIキーを設定します（ローカルストレージに保存）。
-- OpenAI API (`https://api.openai.com/v1`)
-- その他OpenAI互換API（Azure OpenAI, Groq, Together AI等）
+## Responses API 仕様
+
+### リクエスト形式
+```json
+{
+  "model": "gpt-5.2",
+  "input": [
+    { "role": "user", "content": "..." }
+  ],
+  "instructions": "システムプロンプト",
+  "reasoning": { "effort": "none" },
+  "temperature": 0.8,
+  "max_output_tokens": 500,
+  "store": false,
+  "stream": true
+}
+```
+
+### ストリーミングSSEイベント
+```
+event: response.output_text.delta
+data: {"delta": "テキストの一部"}
+```
+
+### 非ストリーミングレスポンス
+```json
+{
+  "output": [
+    {
+      "type": "message",
+      "content": [
+        { "type": "output_text", "text": "完全なテキスト" }
+      ]
+    }
+  ]
+}
+```
 
 ## API エンドポイント
 | パス | メソッド | 説明 |
 |------|---------|------|
 | `/` | GET | メインページ |
 | `/static/*` | GET | 静的ファイル |
-| `/api/chat` | POST | 会話API（ストリーミング） |
-| `/api/feedback` | POST | フィードバック生成 |
+| `/api/chat` | POST | 会話API（Responses APIストリーミング） |
+| `/api/feedback` | POST | フィードバック生成（Responses API非ストリーミング） |
 | `/api/test-connection` | POST | API接続テスト |
-| `/api/tts` | POST | テキスト→音声変換（OpenAI TTS API プロキシ） |
+| `/api/tts` | POST | テキスト→音声変換（OpenAI TTS API） |
 
 ## ローカル開発
 ```bash
@@ -95,51 +118,38 @@ pm2 start ecosystem.config.cjs
 # → http://localhost:3000
 ```
 
-## ファイル構成
-```
-webapp/
-├── server.mjs              # Node.js Express サーバー
-├── ecosystem.config.cjs     # PM2 設定
-├── package.json
-├── public/
-│   └── static/
-│       └── app.js          # フロントエンド JavaScript
-├── src/
-│   └── index.tsx           # Cloudflare Pages版（将来用）
-├── vite.config.ts
-├── wrangler.jsonc
-└── .dev.vars               # 環境変数（git管理外）
-```
-
 ## 使い方
-1. APIキーを設定（OpenAI等のAPIキーが必要）
-2. モデルをドロップダウンから選択（GPT-5.2が最新・最高性能）
+1. APIキーを設定（OpenAI APIキーが必要）
+2. モデルをドロップダウンから選択（gpt-5.2がデフォルト・推奨）
 3. 接続テストで動作確認
-4. シナリオ・ペルソナ・評価基準を設定（プリセット選択も可）
+4. シナリオ・ペルソナ・評価基準を設定
 5. 必要に応じて「商品/サービスURL」と「ゴール設定」を入力
-6. 音声設定で読み上げ方式とボイスを選択（OpenAI TTS推奨）
-7. 設定をテンプレートとして保存可能（「テンプレート保存」ボタン）
-8. 「ロープレを開始する」ボタンで開始
-9. マイクボタンで音声入力、またはテキスト入力
-10. AIが顧客として応答（音声読み上げON時は自動読み上げ）
-11. 終了ボタンで会話を終了し、AIフィードバックを受け取る
+6. 音声設定で読み上げ方式を選択
+7. 「ロープレを開始する」ボタンで開始
+8. マイクボタンで音声入力、またはテキスト入力
+9. 終了ボタンでフィードバックを受け取る
+
+## GPT-5.2 reasoning_effort について
+- `none`（デフォルト）: 推論なし、最速レスポンス。ロープレの会話に最適
+- `low` / `medium` / `high` / `xhigh`: 推論深度を上げる
+- `temperature` は `reasoning_effort: none` の時のみ有効
 
 ## 今後の実装予定
 - [ ] Cloudflare Pages/Workers へのデプロイ対応
 - [ ] 会話履歴の保存・閲覧機能
-- [ ] 複数ロープレ結果の比較分析
-- [ ] テンプレートのインポート/エクスポート
+- [ ] reasoning effort をUI上で切替可能にする
+- [ ] previous_response_id によるマルチターン最適化
 
 ## 注意事項
 - 音声認識はChrome/Edgeブラウザ推奨（HTTPS環境必須）
-- APIキーはブラウザのローカルストレージに保存されます
-- サーバーサイドではAPIキーを永続化しません（リクエスト毎に受け渡し）
-- OpenAI TTS APIを使用する場合はAPI課金が発生します
+- APIキーはブラウザのローカルストレージに保存
+- Responses APIを使用するため、OpenAI APIキーが必要（互換APIでResponses APIに対応している必要あり）
 
 ## 更新履歴
-- **2026-02-18（v3）**: GPT-5.2-pro追加、o3/o3-pro追加、モデルドロップダウンをカテゴリ分類改善、TTS instructions自然化、テンプレートUX改善（バッジ・日時表示）
-- **2026-02-18（v2）**: OpenAI TTS API統合、テンプレート保存機能、商品/サービスURL・ゴール設定追加、GPT-5.2/5.1/5系モデル追加
-- **2026-02-18（v1）**: モデル選択ドロップダウン追加、マイクエラー修正（DOM部分更新方式）、顧客/営業の役割混同問題を修正
+- **2026-02-18（v4）**: **Chat Completions API → Responses API に全面移行**、デフォルトモデルをgpt-5.2に変更、reasoning_effort=none、SSEストリーミング対応、instructionsパラメータ活用
+- **2026-02-18（v3）**: GPT-5.2-pro追加、o3/o3-pro追加、TTS自然化、テンプレートUX改善
+- **2026-02-18（v2）**: OpenAI TTS API統合、テンプレート保存機能、商品URL・ゴール設定追加
+- **2026-02-18（v1）**: モデル選択ドロップダウン追加、マイクエラー修正、役割混同修正
 - **2026-02-17**: 初期バージョンリリース
 
 ## Last Updated
