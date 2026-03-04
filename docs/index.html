@@ -956,10 +956,108 @@ function renderFeedback() {
           <div class="mt-4 space-y-3 max-h-96 overflow-y-auto chat-scroll">${state.messages.map(m => `<div class="flex items-start gap-2 text-sm ${m.role==='user'?'text-blue-700':'text-gray-700'}"><span class="font-bold flex-shrink-0">${m.role==='user'?'営業（あなた）：':'顧客（AI）：'}</span><span>${escapeHtml(m.content)}</span></div>`).join('')}</div>
         </details>
       </div>
-      <div class="text-center pb-8 slide-in"><button onclick="backToSetup()" class="btn-primary text-white px-10 py-3 rounded-2xl font-bold shadow-lg inline-flex items-center gap-2"><i class="fas fa-redo"></i>もう一度ロープレする</button></div>
+      <div class="text-center pb-8 slide-in flex flex-wrap justify-center gap-4">
+        <button onclick="downloadFeedbackCSV()" class="bg-white border-2 border-green-500 text-green-700 hover:bg-green-50 px-8 py-3 rounded-2xl font-bold shadow-sm inline-flex items-center gap-2 transition-all"><i class="fas fa-file-csv"></i>CSVダウンロード</button>
+        <button onclick="backToSetup()" class="btn-primary text-white px-10 py-3 rounded-2xl font-bold shadow-lg inline-flex items-center gap-2"><i class="fas fa-redo"></i>もう一度ロープレする</button>
+      </div>
     </main>
   </div>`;
 }
+
+// ============================================================
+// CSVダウンロード
+// ============================================================
+window.downloadFeedbackCSV = () => {
+  const fb = state.feedback;
+  if (!fb) { showToast('フィードバックデータがありません', 'error'); return; }
+
+  const minutes = Math.floor(state.elapsedSeconds / 60);
+  const seconds = state.elapsedSeconds % 60;
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('ja-JP');
+  const timeStr = now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' });
+
+  // CSVエスケープ: ダブルクォート囲み + 内部のダブルクォートを二重化
+  function csvEscape(val) {
+    const s = String(val ?? '').replace(/\n/g, ' ');
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+
+  const rows = [];
+
+  // ヘッダーセクション
+  rows.push(['セクション', '項目', '内容'].map(csvEscape).join(','));
+  rows.push(['', '', ''].map(csvEscape).join(','));
+
+  // 基本情報
+  rows.push(['基本情報', '実施日', dateStr + ' ' + timeStr].map(csvEscape).join(','));
+  rows.push(['基本情報', '使用モデル', state.model].map(csvEscape).join(','));
+  rows.push(['基本情報', '所要時間', `${minutes}分${seconds}秒`].map(csvEscape).join(','));
+  rows.push(['基本情報', 'ターン数', state.turnCount].map(csvEscape).join(','));
+  rows.push(['基本情報', 'シナリオ', state.scenario].map(csvEscape).join(','));
+  rows.push(['基本情報', '顧客ペルソナ', state.persona].map(csvEscape).join(','));
+  if (state.productURL) rows.push(['基本情報', '商品/サービスURL', state.productURL].map(csvEscape).join(','));
+  if (state.goal) rows.push(['基本情報', 'ゴール設定', state.goal].map(csvEscape).join(','));
+  rows.push(['基本情報', '評価基準', state.criteria].map(csvEscape).join(','));
+  rows.push(['', '', ''].map(csvEscape).join(','));
+
+  // 総合評価
+  rows.push(['総合評価', '総合スコア', fb.overallScore + ' / 100'].map(csvEscape).join(','));
+  rows.push(['総合評価', '総評', fb.summary].map(csvEscape).join(','));
+  rows.push(['', '', ''].map(csvEscape).join(','));
+
+  // 項目別評価
+  if (fb.scores && fb.scores.length > 0) {
+    rows.push(['項目別評価', '評価基準', 'スコア', 'コメント'].map(csvEscape).join(','));
+    fb.scores.forEach(s => {
+      rows.push(['項目別評価', s.criterion, s.score + '/' + s.maxScore, s.comment].map(csvEscape).join(','));
+    });
+    rows.push(['', '', ''].map(csvEscape).join(','));
+  }
+
+  // 良かった点
+  if (fb.strengths && fb.strengths.length > 0) {
+    fb.strengths.forEach((s, i) => {
+      rows.push(['良かった点', `${i + 1}`, s].map(csvEscape).join(','));
+    });
+    rows.push(['', '', ''].map(csvEscape).join(','));
+  }
+
+  // 改善ポイント
+  if (fb.improvements && fb.improvements.length > 0) {
+    fb.improvements.forEach((s, i) => {
+      rows.push(['改善ポイント', `${i + 1}`, s].map(csvEscape).join(','));
+    });
+    rows.push(['', '', ''].map(csvEscape).join(','));
+  }
+
+  // 模範回答
+  if (fb.modelAnswer) {
+    rows.push(['模範的な対応例', '', fb.modelAnswer].map(csvEscape).join(','));
+    rows.push(['', '', ''].map(csvEscape).join(','));
+  }
+
+  // 会話ログ
+  rows.push(['会話ログ', '話者', '発言内容'].map(csvEscape).join(','));
+  state.messages.forEach((m, i) => {
+    const speaker = m.role === 'user' ? '営業（あなた）' : '顧客（AI）';
+    rows.push(['会話ログ', speaker, m.content].map(csvEscape).join(','));
+  });
+
+  // BOM付きUTF-8でダウンロード（Excel対応）
+  const bom = '\uFEFF';
+  const csvContent = bom + rows.join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+
+  const fileName = `ロープレフィードバック_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}.csv`;
+
+  const a = document.createElement('a');
+  a.href = url; a.download = fileName; a.style.display = 'none';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  showToast('CSVをダウンロードしました', 'success');
+};
 
 window.backToSetup = () => { state.currentScreen='setup'; state.messages=[]; state.feedback=null; state.isFeedbackLoading=false; state.isProcessing=false; state.isSpeaking=false; state.isListening=false; state.turnCount=0; render(); };
 </script>
