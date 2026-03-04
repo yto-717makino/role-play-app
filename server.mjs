@@ -91,13 +91,13 @@ app.use((req, res, next) => {
 // ============================
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, scenario, persona, apiKey, baseURL, model, isFirstMessage, productURL, goal } = req.body;
+    const { messages, scenario, persona, apiKey, baseURL, model, isFirstMessage, productURL, goal, personaSpeed, personaTone, closingPoints } = req.body;
 
     if (!apiKey) {
       return res.status(400).json({ error: 'APIキーが設定されていません' });
     }
 
-    const systemPrompt = buildSystemPrompt(scenario, persona, productURL, goal);
+    const systemPrompt = buildSystemPrompt(scenario, persona, productURL, goal, personaSpeed, personaTone, closingPoints);
 
     // Responses API の input を構築
     // role: developer(=system), user, assistant
@@ -194,7 +194,7 @@ app.post('/api/chat', async (req, res) => {
 // ============================
 app.post('/api/feedback', async (req, res) => {
   try {
-    const { messages, scenario, persona, criteria, apiKey, baseURL, model, productURL, goal } = req.body;
+    const { messages, scenario, persona, criteria, apiKey, baseURL, model, productURL, goal, closingPoints } = req.body;
 
     if (!apiKey) {
       return res.status(400).json({ error: 'APIキーが設定されていません' });
@@ -214,6 +214,7 @@ ${scenario}
 ${persona}
 ${productURL ? `\n## 提案商品/サービスURL\n${productURL}` : ''}
 ${goal ? `\n## 営業のゴール設定\n${goal}` : ''}
+${closingPoints ? `\n## クロージングポイント\n${closingPoints}\n※営業担当がこれらのポイントに到達できたかどうかも評価に含めてください。` : ''}
 
 ## 評価基準
 ${criteria}
@@ -417,7 +418,24 @@ server.listen(PORT, '0.0.0.0', () => {
 // ============================
 // システムプロンプト構築
 // ============================
-function buildSystemPrompt(scenario, persona, productURL, goal) {
+function buildSystemPrompt(scenario, persona, productURL, goal, personaSpeed, personaTone, closingPoints) {
+  // 話すスピード設定
+  const speedMap = {
+    slow: '慎重に考えながらゆっくり話す。間を取り、一つ一つ丁寧に言葉を選ぶ。',
+    normal: '標準的なテンポで会話する。',
+    fast: 'テンポよく簡潔に話す。要点を短く伝え、無駄な前置きをしない。',
+  };
+  const speedInstruction = speedMap[personaSpeed] || speedMap.normal;
+
+  // トーン設定
+  const toneMap = {
+    gentle: '穏やかで丁寧な口調。「〜ですね」「〜でしょうか」など柔らかい表現を使う。',
+    firm: '堅実で厳格な口調。ストレートに意見を述べ、曖昧な表現を避ける。',
+    friendly: '親しみやすいフレンドリーな口調。「〜だよね」「〜かな」などカジュアルな表現も交える。',
+    business: 'ビジネスライクで簡潔な口調。効率的に要点を確認し、論理的に話す。',
+  };
+  const toneInstruction = toneMap[personaTone] || toneMap.business;
+
   let prompt = `あなたは営業ロールプレイングの練習相手として「顧客役」を演じてください。
 この会話では、あなた(assistant)＝顧客、相手(user)＝営業担当者です。
 あなたは絶対に営業担当者の立場で話してはいけません。常に顧客としてのみ発言してください。
@@ -426,37 +444,25 @@ function buildSystemPrompt(scenario, persona, productURL, goal) {
 ${scenario}
 
 ## あなたが演じる顧客のペルソナ
-${persona}`;
+${persona}
+
+## 話し方の設定
+- スピード: ${speedInstruction}
+- トーン: ${toneInstruction}`;
 
   if (productURL) {
-    prompt += `
-
-## 営業担当が提案する商品/サービス
-参考URL: ${productURL}
-※営業担当がこのサービスについて説明してくるかもしれません。顧客として内容について質問したり、疑問を投げかけてください。`;
+    prompt += `\n\n## 営業担当が提案する商品/サービス\n参考URL: ${productURL}\n※営業担当がこのサービスについて説明してくるかもしれません。顧客として内容について質問したり、疑問を投げかけてください。`;
   }
 
   if (goal) {
-    prompt += `
-
-## このロープレのゴール設定（営業担当の目標）
-${goal}
-※これは営業担当の目標です。あなたは顧客なので、簡単にはこの目標を達成させないでください。ただし良い提案をされたら段階的に前向きになってください。`;
+    prompt += `\n\n## このロープレのゴール設定（営業担当の目標）\n${goal}\n※これは営業担当の目標です。あなたは顧客なので、簡単にはこの目標を達成させないでください。ただし良い提案をされたら段階的に前向きになってください。`;
   }
 
-  prompt += `
+  if (closingPoints && closingPoints.trim()) {
+    prompt += `\n\n## クロージングポイント（営業が達成すべき条件）\n${closingPoints}\n※営業担当がこれらの条件を満たす発言・提案をした場合、あなたは段階的にクロージングに応じる姿勢を見せてください。条件を満たしていない場合は慎重な態度を維持してください。ただし、すべてを一度に認めるのではなく、一つずつ反応してください。`;
+  }
 
-## 重要なルール
-- 必ず日本語で応答してください
-- あなたは「顧客」です。営業担当者ではありません。この点を絶対に忘れないでください
-- 顧客の立場から、自然で現実的な反応をしてください
-- 簡単には承諾せず、適度に質問や懸念を投げかけてください
-- 1回の応答は2〜4文程度に抑え、会話のテンポを保ってください
-- 相手（営業担当者）の提案が良ければ段階的に前向きになってください
-- 感情的な反応も適度に入れてください（興味、疑問、不安など）
-- 「AI」「ロールプレイ」「シミュレーション」などメタ的な発言は一切しないでください
-- あくまで本物の顧客として振る舞い続けてください
-- 自己紹介する時はペルソナに記載されている名前・肩書きを使ってください`;
+  prompt += `\n\n## 重要なルール\n- 必ず日本語で応答してください\n- あなたは「顧客」です。営業担当者ではありません。この点を絶対に忘れないでください\n- 顧客の立場から、自然で現実的な反応をしてください\n- 簡単には承諾せず、適度に質問や懸念を投げかけてください\n- 1回の応答は2〜4文程度に抑え、会話のテンポを保ってください。間延びさせず簡潔に話してください\n- 相手（営業担当者）の提案が良ければ段階的に前向きになってください\n- 感情的な反応も適度に入れてください（興味、疑問、不安など）\n- 「AI」「ロールプレイ」「シミュレーション」などメタ的な発言は一切しないでください\n- あくまで本物の顧客として振る舞い続けてください\n- 自己紹介する時はペルソナに記載されている名前・肩書きを使ってください`;
 
   return prompt;
 }

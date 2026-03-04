@@ -1,5 +1,5 @@
 // ============================================================
-// AI営業ロープレ - フロントエンド v2
+// AI営業ロープレ - フロントエンド v3
 // ============================================================
 
 // ===== 状態管理 =====
@@ -16,6 +16,11 @@ const state = {
   criteria: '',
   productURL: '',
   goal: '',
+  // ペルソナ追加パラメータ
+  personaSpeed: localStorage.getItem('roleplay_personaSpeed') || 'normal',   // slow | normal | fast
+  personaTone: localStorage.getItem('roleplay_personaTone') || 'business',    // gentle | firm | friendly | business
+  // クロージングポイント
+  closingPoints: '',
   // 会話
   messages: [],
   isListening: false,
@@ -42,6 +47,19 @@ const state = {
   // テンプレート
   templates: JSON.parse(localStorage.getItem('roleplay_templates') || '[]'),
 };
+
+// ===== ペルソナパラメータ選択肢 =====
+const PERSONA_SPEEDS = [
+  { id: 'slow', name: 'ゆっくり', desc: '慎重に考えながら話す', icon: 'fa-turtle' },
+  { id: 'normal', name: '普通', desc: '標準的なテンポ', icon: 'fa-person-walking' },
+  { id: 'fast', name: '早口', desc: 'テンポよく短く話す', icon: 'fa-person-running' },
+];
+const PERSONA_TONES = [
+  { id: 'gentle', name: '穏やか', desc: '柔らかく丁寧な口調' },
+  { id: 'firm', name: '固め', desc: '堅実で厳格な口調' },
+  { id: 'friendly', name: 'フレンドリー', desc: '親しみやすい口調' },
+  { id: 'business', name: 'ビジネスライク', desc: '簡潔で効率的な口調' },
+];
 
 // ===== 既知モデル一覧 =====
 const KNOWN_MODELS = [
@@ -117,9 +135,21 @@ const PRESETS = {
 };
 
 function loadPresets() {
-  state.scenario = PRESETS.newBiz.scenario;
-  state.persona = PRESETS.newBiz.persona;
-  state.criteria = PRESETS.newBiz.criteria;
+  // 初回のみデフォルトプリセットを適用（既に値がある場合は上書きしない）
+  if (!state.scenario) state.scenario = PRESETS.newBiz.scenario;
+  if (!state.persona) state.persona = PRESETS.newBiz.persona;
+  if (!state.criteria) state.criteria = PRESETS.newBiz.criteria;
+}
+
+// ===== フォームの入力値をstateに同期 =====
+function syncStateFromForm() {
+  const el = (id) => document.getElementById(id);
+  if (el('scenario')) state.scenario = el('scenario').value;
+  if (el('persona')) state.persona = el('persona').value;
+  if (el('criteria')) state.criteria = el('criteria').value;
+  if (el('productURL')) state.productURL = el('productURL').value;
+  if (el('goal')) state.goal = el('goal').value;
+  if (el('closingPoints')) state.closingPoints = el('closingPoints').value;
 }
 
 // ===== レンダリング =====
@@ -266,6 +296,16 @@ function renderSetup() {
           `).join('')}
         </div>
 
+        <!-- テンプレートエクスポート/インポート -->
+        <div class="flex gap-2 mt-2">
+          <button onclick="exportTemplates()" class="text-xs text-gray-500 hover:text-blue-600 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-blue-300 transition-all bg-white">
+            <i class="fas fa-file-export"></i>エクスポート
+          </button>
+          <button onclick="importTemplates()" class="text-xs text-gray-500 hover:text-blue-600 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-blue-300 transition-all bg-white">
+            <i class="fas fa-file-import"></i>インポート
+          </button>
+        </div>
+
         <!-- 保存済みテンプレート一覧 -->
         <div id="templateList" class="hidden mt-3 space-y-2">
           ${state.templates.map((t, i) => `
@@ -275,6 +315,7 @@ function renderSetup() {
                   <span class="text-sm font-semibold text-gray-800">${escapeHtml(t.name)}</span>
                   ${t.productURL ? '<span class="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">URL付き</span>' : ''}
                   ${t.goal ? '<span class="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full">目標付き</span>' : ''}
+                  ${t.closingPoints ? '<span class="text-[10px] bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full">CP付き</span>' : ''}
                 </div>
                 <div class="text-xs text-gray-500 mt-0.5">${escapeHtml(t.scenario.substring(0, 60))}...</div>
                 ${t.createdAt ? '<div class="text-[10px] text-gray-400 mt-0.5">' + new Date(t.createdAt).toLocaleDateString('ja-JP') + ' 保存</div>' : ''}
@@ -345,6 +386,52 @@ function renderSetup() {
             <textarea id="criteria" rows="3"
               class="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm resize-none"
               placeholder="評価したい項目を記述してください...">${state.criteria}</textarea>
+          </div>
+
+          <!-- ペルソナ追加パラメータ -->
+          <div class="border-t border-gray-100 pt-5">
+            <p class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2">
+              <i class="fas fa-sliders-h text-blue-400"></i>顧客の話し方設定
+            </p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-2">話すスピード</label>
+                <div class="flex gap-2">
+                  ${PERSONA_SPEEDS.map(s => `
+                    <button type="button" onclick="setPersonaSpeed('${s.id}')" id="speed-${s.id}"
+                      class="flex-1 px-3 py-2 rounded-lg border-2 text-center transition-all text-xs font-medium
+                        ${state.personaSpeed === s.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'}">
+                      <div class="font-bold">${s.name}</div>
+                      <div class="text-[10px] mt-0.5 opacity-70">${s.desc}</div>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-2">トーン（口調）</label>
+                <div class="grid grid-cols-2 gap-2">
+                  ${PERSONA_TONES.map(t => `
+                    <button type="button" onclick="setPersonaTone('${t.id}')" id="tone-${t.id}"
+                      class="px-3 py-2 rounded-lg border-2 text-center transition-all text-xs font-medium
+                        ${state.personaTone === t.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'}">
+                      <div class="font-bold">${t.name}</div>
+                      <div class="text-[10px] mt-0.5 opacity-70">${t.desc}</div>
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- クロージングポイント -->
+          <div class="border-t border-gray-100 pt-5">
+            <label class="block text-sm font-semibold text-gray-700 mb-2">
+              <i class="fas fa-flag-checkered text-green-500 mr-1"></i>クロージングポイント
+            </label>
+            <textarea id="closingPoints" rows="3"
+              class="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm resize-none"
+              placeholder="例:&#10;・次回のデモ日程を具体的に提示できたら&#10;・導入後のROIを数値で説明できたら&#10;・顧客が『検討します』ではなく具体的な質問をしてきたら">${state.closingPoints}</textarea>
+            <p class="text-xs text-gray-400 mt-1">この言葉が言えたら・聞けたらクロージングに進めるポイントを設定。AI顧客が適切なタイミングで前向きに反応します。</p>
           </div>
         </div>
       </div>
@@ -418,11 +505,13 @@ function renderSetup() {
 // テンプレート管理
 // ============================================================
 window.saveTemplate = () => {
-  const scenario = document.getElementById('scenario')?.value || '';
-  const persona = document.getElementById('persona')?.value || '';
-  const criteria = document.getElementById('criteria')?.value || '';
-  const productURL = document.getElementById('productURL')?.value || '';
-  const goal = document.getElementById('goal')?.value || '';
+  syncStateFromForm();
+  const scenario = state.scenario;
+  const persona = state.persona;
+  const criteria = state.criteria;
+  const productURL = state.productURL;
+  const goal = state.goal;
+  const closingPoints = state.closingPoints;
 
   if (!scenario.trim()) {
     showToast('シナリオを入力してからテンプレートを保存してください', 'error');
@@ -432,7 +521,7 @@ window.saveTemplate = () => {
   const name = prompt('テンプレート名を入力してください:', scenario.substring(0, 30) + '...');
   if (!name) return;
 
-  state.templates.push({ name, scenario, persona, criteria, productURL, goal, createdAt: Date.now() });
+  state.templates.push({ name, scenario, persona, criteria, productURL, goal, personaSpeed: state.personaSpeed, personaTone: state.personaTone, closingPoints, createdAt: Date.now() });
   localStorage.setItem('roleplay_templates', JSON.stringify(state.templates));
   render();
   showToast(`テンプレート「${name}」を保存しました`, 'success');
@@ -446,6 +535,9 @@ window.loadTemplate = (index) => {
   state.criteria = t.criteria || '';
   state.productURL = t.productURL || '';
   state.goal = t.goal || '';
+  state.personaSpeed = t.personaSpeed || 'normal';
+  state.personaTone = t.personaTone || 'business';
+  state.closingPoints = t.closingPoints || '';
   render();
   showToast(`テンプレート「${t.name}」を読み込みました`, 'success');
 };
@@ -465,10 +557,59 @@ window.toggleTemplateList = () => {
   if (list) list.classList.toggle('hidden');
 };
 
+// ===== テンプレートエクスポート/インポート =====
+window.exportTemplates = () => {
+  if (state.templates.length === 0) { showToast('エクスポートするテンプレートがありません', 'error'); return; }
+  const data = JSON.stringify(state.templates, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const now = new Date();
+  const fileName = `ロープレテンプレート_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.json`;
+  const a = document.createElement('a');
+  a.href = url; a.download = fileName; a.style.display = 'none';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  showToast(`${state.templates.length}件のテンプレートをエクスポートしました`, 'success');
+};
+
+window.importTemplates = () => {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json'; input.style.display = 'none';
+  input.onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const imported = JSON.parse(ev.target.result);
+        if (!Array.isArray(imported)) throw new Error('invalid');
+        let count = 0;
+        for (const t of imported) {
+          if (t.scenario && t.persona) {
+            // 重複チェック（同名+同シナリオはスキップ）
+            const exists = state.templates.some(ex => ex.name === t.name && ex.scenario === t.scenario);
+            if (!exists) { state.templates.push(t); count++; }
+          }
+        }
+        localStorage.setItem('roleplay_templates', JSON.stringify(state.templates));
+        syncStateFromForm();
+        render();
+        showToast(`${count}件のテンプレートをインポートしました`, 'success');
+      } catch (err) {
+        showToast('ファイルの読み込みに失敗しました。正しいJSONファイルを選択してください。', 'error');
+      }
+    };
+    reader.readAsText(file);
+  };
+  document.body.appendChild(input); input.click();
+  setTimeout(() => document.body.removeChild(input), 1000);
+};
+
 // ============================================================
 // API設定
 // ============================================================
 window.saveApiSettings = () => {
+  syncStateFromForm(); // フォームの入力値を保存してからrender
   state.apiKey = document.getElementById('apiKey').value.trim();
   state.baseURL = document.getElementById('baseURL').value.trim() || 'https://api.openai.com/v1';
   state.model = getSelectedModel();
@@ -527,7 +668,32 @@ window.onTtsVoiceChange = () => {
   }
 };
 
+// ===== ペルソナパラメータ =====
+window.setPersonaSpeed = (speed) => {
+  state.personaSpeed = speed;
+  localStorage.setItem('roleplay_personaSpeed', speed);
+  PERSONA_SPEEDS.forEach(s => {
+    const btn = document.getElementById('speed-' + s.id);
+    if (btn) {
+      if (s.id === speed) { btn.className = btn.className.replace(/border-gray-200 bg-white text-gray-600 hover:border-blue-300/g, 'border-blue-500 bg-blue-50 text-blue-700'); }
+      else { btn.className = btn.className.replace(/border-blue-500 bg-blue-50 text-blue-700/g, 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'); }
+    }
+  });
+};
+window.setPersonaTone = (tone) => {
+  state.personaTone = tone;
+  localStorage.setItem('roleplay_personaTone', tone);
+  PERSONA_TONES.forEach(t => {
+    const btn = document.getElementById('tone-' + t.id);
+    if (btn) {
+      if (t.id === tone) { btn.className = btn.className.replace(/border-gray-200 bg-white text-gray-600 hover:border-blue-300/g, 'border-blue-500 bg-blue-50 text-blue-700'); }
+      else { btn.className = btn.className.replace(/border-blue-500 bg-blue-50 text-blue-700/g, 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'); }
+    }
+  });
+};
+
 window.testConnection = async () => {
+  syncStateFromForm(); // フォームの入力値を保存してからrender
   const apiKey = document.getElementById('apiKey').value.trim();
   const baseURL = document.getElementById('baseURL').value.trim() || 'https://api.openai.com/v1';
   const model = getSelectedModel();
@@ -589,11 +755,15 @@ window.applyPreset = (key) => {
   state.criteria = p.criteria;
   state.productURL = '';
   state.goal = '';
-  const s = document.getElementById('scenario'); if (s) s.value = p.scenario;
-  const pe = document.getElementById('persona'); if (pe) pe.value = p.persona;
-  const c = document.getElementById('criteria'); if (c) c.value = p.criteria;
-  const pu = document.getElementById('productURL'); if (pu) pu.value = '';
-  const g = document.getElementById('goal'); if (g) g.value = '';
+  state.closingPoints = '';
+  // DOMを直接更新（renderを呼ばずにフォーム値だけ更新）
+  const el = (id) => document.getElementById(id);
+  if (el('scenario')) el('scenario').value = p.scenario;
+  if (el('persona')) el('persona').value = p.persona;
+  if (el('criteria')) el('criteria').value = p.criteria;
+  if (el('productURL')) el('productURL').value = '';
+  if (el('goal')) el('goal').value = '';
+  if (el('closingPoints')) el('closingPoints').value = '';
   showToast(`「${p.name}」を適用しました`);
 };
 
@@ -603,6 +773,7 @@ window.startRoleplay = () => {
   state.criteria = document.getElementById('criteria').value;
   state.productURL = document.getElementById('productURL')?.value || '';
   state.goal = document.getElementById('goal')?.value || '';
+  state.closingPoints = document.getElementById('closingPoints')?.value || '';
   state.autoSpeak = document.getElementById('autoSpeak').checked;
 
   if (!state.apiKey) { showToast('APIキーを設定してください', 'error'); return; }
@@ -795,6 +966,8 @@ async function generateAIFirstMessage() {
         messages: [], scenario: state.scenario, persona: state.persona,
         apiKey: state.apiKey, baseURL: state.baseURL, model: state.model,
         isFirstMessage: true, productURL: state.productURL, goal: state.goal,
+        personaSpeed: state.personaSpeed, personaTone: state.personaTone,
+        closingPoints: state.closingPoints,
       }),
     });
     if (!response.ok) { const err = await response.json(); throw new Error(err.error || 'API呼び出しに失敗しました'); }
@@ -1039,6 +1212,8 @@ async function sendMessage(text) {
         messages: state.messages, scenario: state.scenario, persona: state.persona,
         apiKey: state.apiKey, baseURL: state.baseURL, model: state.model,
         productURL: state.productURL, goal: state.goal,
+        personaSpeed: state.personaSpeed, personaTone: state.personaTone,
+        closingPoints: state.closingPoints,
       }),
     });
     if (!response.ok) { const err = await response.json(); throw new Error(err.error || 'API呼び出しに失敗しました'); }
@@ -1199,6 +1374,7 @@ async function generateFeedback() {
         messages: state.messages, scenario: state.scenario, persona: state.persona,
         criteria: state.criteria, apiKey: state.apiKey, baseURL: state.baseURL, model: state.model,
         productURL: state.productURL, goal: state.goal,
+        closingPoints: state.closingPoints,
       }),
     });
     if (!response.ok) { const err = await response.json(); throw new Error(err.error || 'フィードバック生成に失敗'); }
@@ -1213,80 +1389,163 @@ async function generateFeedback() {
 
 function renderFeedback() {
   if (state.isFeedbackLoading) {
-    return `<div class="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center"><div class="text-center"><div class="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div><p class="text-lg font-semibold text-gray-700">フィードバックを生成中...</p><p class="text-sm text-gray-500 mt-2">AIが会話を分析しています</p></div></div>`;
+    return `<div class="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+      <div class="text-center">
+        <div class="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+        <p class="text-lg font-semibold text-gray-700">フィードバックを生成中...</p>
+        <p class="text-sm text-gray-500 mt-2">AIが会話を分析しています</p>
+      </div>
+    </div>`;
   }
 
-  const fb = state.feedback;
+  const fb = state.feedback || {};
   const minutes = Math.floor(state.elapsedSeconds / 60);
   const seconds = state.elapsedSeconds % 60;
-  const scoreColor = fb.overallScore >= 70 ? 'text-green-600' : fb.overallScore >= 40 ? 'text-yellow-600' : 'text-red-600';
+  const score = typeof fb.overallScore === 'number' ? fb.overallScore : 0;
+  const scoreColor = score >= 70 ? 'text-green-600' : score >= 40 ? 'text-yellow-600' : 'text-red-600';
+  const summary = fb.summary || 'フィードバックデータが取得できませんでした。';
+  const scores = Array.isArray(fb.scores) ? fb.scores : [];
+  const strengths = Array.isArray(fb.strengths) ? fb.strengths : [];
+  const improvements = Array.isArray(fb.improvements) ? fb.improvements : [];
+  const modelAnswer = fb.modelAnswer || '';
+
+  // 項目別評価HTML
+  let scoresHtml = '';
+  if (scores.length > 0) {
+    const itemsHtml = scores.map(s => {
+      const sc = typeof s.score === 'number' ? s.score : 0;
+      const ms = typeof s.maxScore === 'number' ? s.maxScore : 10;
+      const pct = ms > 0 ? Math.min((sc / ms) * 100, 100) : 0;
+      const bc = pct >= 70 ? 'bg-green-500' : pct >= 40 ? 'bg-yellow-500' : 'bg-red-500';
+      const tc = pct >= 70 ? 'text-green-600' : pct >= 40 ? 'text-yellow-600' : 'text-red-600';
+      return `<div class="mb-3">
+        <div class="flex justify-between items-center mb-1">
+          <span class="text-sm font-medium text-gray-700 break-words">${escapeHtml(s.criterion || '')}</span>
+          <span class="text-sm font-bold ${tc} flex-shrink-0 ml-2">${sc}/${ms}</span>
+        </div>
+        <div class="w-full bg-gray-100 rounded-full h-2.5 mb-1">
+          <div class="${bc} h-2.5 rounded-full score-bar-fill" style="width:${pct}%"></div>
+        </div>
+        <p class="text-xs text-gray-500 break-words">${escapeHtml(s.comment || '')}</p>
+      </div>`;
+    }).join('');
+    scoresHtml = `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in">
+      <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+        <i class="fas fa-star text-yellow-500"></i>項目別評価
+      </h2>
+      <div>${itemsHtml}</div>
+    </div>`;
+  }
+
+  // 良かった点 / 改善ポイント
+  let strengthsHtml = '';
+  if (strengths.length > 0) {
+    strengthsHtml = `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+      <h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-thumbs-up text-green-500"></i>良かった点</h2>
+      <ul class="space-y-2">${strengths.map(s => `<li class="flex items-start gap-2 text-sm text-gray-700">
+        <i class="fas fa-check-circle text-green-400 mt-0.5 flex-shrink-0"></i>
+        <span class="break-words min-w-0">${escapeHtml(s)}</span>
+      </li>`).join('')}</ul>
+    </div>`;
+  }
+  let improvementsHtml = '';
+  if (improvements.length > 0) {
+    improvementsHtml = `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+      <h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-lightbulb text-orange-500"></i>改善ポイント</h2>
+      <ul class="space-y-2">${improvements.map(s => `<li class="flex items-start gap-2 text-sm text-gray-700">
+        <i class="fas fa-arrow-circle-up text-orange-400 mt-0.5 flex-shrink-0"></i>
+        <span class="break-words min-w-0">${escapeHtml(s)}</span>
+      </li>`).join('')}</ul>
+    </div>`;
+  }
+
+  // 模範回答
+  let modelAnswerHtml = '';
+  if (modelAnswer) {
+    modelAnswerHtml = `<div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 p-6 slide-in">
+      <h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-trophy text-blue-500"></i>模範的な対応例</h2>
+      <p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(modelAnswer)}</p>
+    </div>`;
+  }
+
+  // 会話ログ
+  const logsHtml = state.messages.map(m => `<div class="flex items-start gap-2 text-sm ${m.role === 'user' ? 'text-blue-700' : 'text-gray-700'} py-1">
+    <span class="font-bold flex-shrink-0 whitespace-nowrap">${m.role === 'user' ? '営業:' : '顧客:'}</span>
+    <span class="break-words min-w-0">${escapeHtml(m.content)}</span>
+  </div>`).join('');
 
   return `
   <div class="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
     <header class="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-10">
       <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center"><i class="fas fa-chart-line text-white text-lg"></i></div>
-          <div><h1 class="text-xl font-bold text-gray-800">フィードバック</h1><p class="text-xs text-gray-500">ロープレ結果レポート</p></div>
+        <div class="flex items-center gap-3 min-w-0">
+          <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0">
+            <i class="fas fa-chart-line text-white text-lg"></i>
+          </div>
+          <div class="min-w-0">
+            <h1 class="text-xl font-bold text-gray-800 truncate">フィードバック</h1>
+            <p class="text-xs text-gray-500">ロープレ結果レポート</p>
+          </div>
         </div>
-        <button onclick="backToSetup()" class="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"><i class="fas fa-redo"></i>もう一度</button>
+        <button onclick="backToSetup()" class="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 flex-shrink-0 ml-2">
+          <i class="fas fa-redo"></i>もう一度
+        </button>
       </div>
     </header>
 
     <main class="max-w-4xl mx-auto px-4 py-8 space-y-6">
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in">
+      <!-- 総合スコア -->
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in overflow-hidden">
         <div class="flex flex-col sm:flex-row items-center gap-6">
-          <div class="relative w-32 h-32 flex-shrink-0">
+          <div class="relative w-28 h-28 sm:w-32 sm:h-32 flex-shrink-0">
             <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
               <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#e5e7eb" stroke-width="3"/>
-              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="url(#sg)" stroke-width="3" stroke-dasharray="${fb.overallScore}, 100" stroke-linecap="round"/>
+              <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="url(#sg)" stroke-width="3" stroke-dasharray="${score}, 100" stroke-linecap="round"/>
               <defs><linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" style="stop-color:#3b82f6"/><stop offset="100%" style="stop-color:#8b5cf6"/></linearGradient></defs>
             </svg>
-            <div class="absolute inset-0 flex flex-col items-center justify-center"><span class="text-3xl font-bold ${scoreColor}">${fb.overallScore}</span><span class="text-xs text-gray-500">/ 100</span></div>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span class="text-3xl font-bold ${scoreColor}">${score}</span>
+              <span class="text-xs text-gray-500">/ 100</span>
+            </div>
           </div>
-          <div class="flex-1 text-center sm:text-left">
-            <p class="text-gray-700 leading-relaxed">${escapeHtml(fb.summary)}</p>
-            <div class="mt-3 flex flex-wrap gap-3 justify-center sm:justify-start">
-              <span class="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full"><i class="fas fa-clock mr-1"></i>${minutes}分${seconds}秒</span>
-              <span class="text-xs bg-purple-50 text-purple-700 px-3 py-1 rounded-full"><i class="fas fa-comments mr-1"></i>${state.turnCount}ターン</span>
-              ${state.goal ? `<span class="text-xs bg-amber-50 text-amber-700 px-3 py-1 rounded-full"><i class="fas fa-bullseye mr-1"></i>目標: ${escapeHtml(state.goal.substring(0, 30))}</span>` : ''}
+          <div class="flex-1 text-center sm:text-left min-w-0">
+            <p class="text-gray-700 leading-relaxed break-words">${escapeHtml(summary)}</p>
+            <div class="mt-3 flex flex-wrap gap-2 justify-center sm:justify-start">
+              <span class="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full whitespace-nowrap"><i class="fas fa-clock mr-1"></i>${minutes}分${seconds}秒</span>
+              <span class="text-xs bg-purple-50 text-purple-700 px-3 py-1 rounded-full whitespace-nowrap"><i class="fas fa-comments mr-1"></i>${state.turnCount}ターン</span>
+              ${state.goal ? `<span class="text-xs bg-amber-50 text-amber-700 px-3 py-1 rounded-full"><i class="fas fa-bullseye mr-1"></i>目標: ${escapeHtml(state.goal.substring(0, 20))}${state.goal.length > 20 ? '...' : ''}</span>` : ''}
             </div>
           </div>
         </div>
       </div>
 
-      ${fb.scores && fb.scores.length > 0 ? `
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in">
-        <h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i class="fas fa-star text-yellow-500"></i>項目別評価</h2>
-        <div class="space-y-4">
-          ${fb.scores.map(s => {
-            const pct = (s.score / s.maxScore) * 100;
-            const bc = pct >= 70 ? 'bg-green-500' : pct >= 40 ? 'bg-yellow-500' : 'bg-red-500';
-            const tc = pct >= 70 ? 'text-green-600' : pct >= 40 ? 'text-yellow-600' : 'text-red-600';
-            return `<div><div class="flex justify-between items-center mb-1"><span class="text-sm font-medium text-gray-700">${escapeHtml(s.criterion)}</span><span class="text-sm font-bold ${tc}">${s.score}/${s.maxScore}</span></div><div class="w-full bg-gray-100 rounded-full h-2.5 mb-1"><div class="${bc} h-2.5 rounded-full score-bar-fill" style="width:${pct}%"></div></div><p class="text-xs text-gray-500">${escapeHtml(s.comment)}</p></div>`;
-          }).join('')}
-        </div>
-      </div>` : ''}
+      ${scoresHtml}
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 slide-in">
-        ${fb.strengths?.length ? `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"><h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-thumbs-up text-green-500"></i>良かった点</h2><ul class="space-y-2">${fb.strengths.map(s=>`<li class="flex items-start gap-2 text-sm text-gray-700"><i class="fas fa-check-circle text-green-400 mt-0.5 flex-shrink-0"></i><span>${escapeHtml(s)}</span></li>`).join('')}</ul></div>` : ''}
-        ${fb.improvements?.length ? `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"><h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-lightbulb text-orange-500"></i>改善ポイント</h2><ul class="space-y-2">${fb.improvements.map(s=>`<li class="flex items-start gap-2 text-sm text-gray-700"><i class="fas fa-arrow-circle-up text-orange-400 mt-0.5 flex-shrink-0"></i><span>${escapeHtml(s)}</span></li>`).join('')}</ul></div>` : ''}
+        ${strengthsHtml}
+        ${improvementsHtml}
       </div>
 
-      ${fb.modelAnswer ? `<div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 p-6 slide-in"><h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-trophy text-blue-500"></i>模範的な対応例</h2><p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">${escapeHtml(fb.modelAnswer)}</p></div>` : ''}
+      ${modelAnswerHtml}
 
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in">
+      <!-- 会話ログ -->
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in overflow-hidden">
         <details>
-          <summary class="cursor-pointer text-lg font-bold text-gray-800 flex items-center gap-2"><i class="fas fa-scroll text-gray-500"></i>会話ログ</summary>
-          <div class="mt-4 space-y-3 max-h-96 overflow-y-auto chat-scroll">
-            ${state.messages.map(m => `<div class="flex items-start gap-2 text-sm ${m.role==='user'?'text-blue-700':'text-gray-700'}"><span class="font-bold flex-shrink-0">${m.role==='user'?'営業（あなた）：':'顧客（AI）：'}</span><span>${escapeHtml(m.content)}</span></div>`).join('')}
-          </div>
+          <summary class="cursor-pointer text-lg font-bold text-gray-800 flex items-center gap-2">
+            <i class="fas fa-scroll text-gray-500"></i>会話ログ
+          </summary>
+          <div class="mt-4 space-y-1 max-h-96 overflow-y-auto chat-scroll">${logsHtml}</div>
         </details>
       </div>
 
-      <div class="text-center pb-8 slide-in flex flex-wrap justify-center gap-4">
-        <button onclick="downloadFeedbackCSV()" class="bg-white border-2 border-green-500 text-green-700 hover:bg-green-50 px-8 py-3 rounded-2xl font-bold shadow-sm inline-flex items-center gap-2 transition-all"><i class="fas fa-file-csv"></i>CSVダウンロード</button>
-        <button onclick="backToSetup()" class="btn-primary text-white px-10 py-3 rounded-2xl font-bold shadow-lg inline-flex items-center gap-2"><i class="fas fa-redo"></i>もう一度ロープレする</button>
+      <!-- ボタン -->
+      <div class="text-center pb-8 slide-in flex flex-wrap justify-center gap-3">
+        <button onclick="downloadFeedbackCSV()" class="bg-white border-2 border-green-500 text-green-700 hover:bg-green-50 px-6 py-3 rounded-2xl font-bold shadow-sm inline-flex items-center gap-2 transition-all text-sm">
+          <i class="fas fa-file-csv"></i>CSVダウンロード
+        </button>
+        <button onclick="backToSetup()" class="btn-primary text-white px-8 py-3 rounded-2xl font-bold shadow-lg inline-flex items-center gap-2 text-sm">
+          <i class="fas fa-redo"></i>もう一度ロープレする
+        </button>
       </div>
     </main>
   </div>`;

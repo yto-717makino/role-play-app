@@ -84,6 +84,9 @@ const state = {
   model: localStorage.getItem('roleplay_model') || 'gpt-5.2',
   apiConnected: false,
   scenario: '', persona: '', criteria: '', productURL: '', goal: '',
+  personaSpeed: localStorage.getItem('roleplay_personaSpeed') || 'normal',
+  personaTone: localStorage.getItem('roleplay_personaTone') || 'business',
+  closingPoints: '',
   messages: [],
   isListening: false, isSpeaking: false, isProcessing: false,
   startTime: null, elapsedSeconds: 0, timerInterval: null, turnCount: 0,
@@ -96,6 +99,18 @@ const state = {
   autoSpeak: true, interimTranscript: '', showTextInput: false,
   templates: JSON.parse(localStorage.getItem('roleplay_templates') || '[]'),
 };
+
+const PERSONA_SPEEDS = [
+  { id: 'slow', name: 'ゆっくり', desc: '慎重に考えながら話す' },
+  { id: 'normal', name: '普通', desc: '標準的なテンポ' },
+  { id: 'fast', name: '早口', desc: 'テンポよく短く話す' },
+];
+const PERSONA_TONES = [
+  { id: 'gentle', name: '穏やか', desc: '柔らかく丁寧な口調' },
+  { id: 'firm', name: '固め', desc: '堅実で厳格な口調' },
+  { id: 'friendly', name: 'フレンドリー', desc: '親しみやすい口調' },
+  { id: 'business', name: 'ビジネスライク', desc: '簡潔で効率的な口調' },
+];
 
 const KNOWN_MODELS = [
   'gpt-5.2', 'gpt-5.2-pro', 'gpt-5.1',
@@ -165,6 +180,20 @@ function extractTextFromResponse(responseData) {
 }
 
 function buildSystemPrompt(scenario, persona, productURL, goal) {
+  const speedMap = {
+    slow: 'ゆっくり慎重に考えながら話すスタイル。間を置きながら、一つ一つ確認するように応答してください。応答はやや長めでもOK。',
+    normal: '自然なテンポで応答してください。1回の応答は2〜4文程度。',
+    fast: 'テンポよく短く応答してください。1回の応答は1〜2文程度で、結論を先に言うスタイル。',
+  };
+  const toneMap = {
+    gentle: '柔らかく丁寧な口調で、「〜ですね」「〜でしょうか」といった表現を使ってください。',
+    firm: '堅実で厳格な口調で、「〜です」「〜である」といった表現を使い、核心を突く質問をしてください。',
+    friendly: '親しみやすくフレンドリーな口調で、笑いや相槌を交えて話してください。',
+    business: '簡潔で効率的なビジネスライクな口調で、要点を絞った応答をしてください。',
+  };
+  const speedInstruction = speedMap[state.personaSpeed] || speedMap.normal;
+  const toneInstruction = toneMap[state.personaTone] || toneMap.business;
+
   let prompt = `あなたは営業ロールプレイングの練習相手として「顧客役」を演じてください。
 この会話では、あなた(assistant)＝顧客、相手(user)＝営業担当者です。
 あなたは絶対に営業担当者の立場で話してはいけません。常に顧客としてのみ発言してください。
@@ -173,19 +202,29 @@ function buildSystemPrompt(scenario, persona, productURL, goal) {
 ${scenario}
 
 ## あなたが演じる顧客のペルソナ
-${persona}`;
+${persona}
+
+## 応答スタイル
+- 話すスピード: ${speedInstruction}
+- トーン: ${toneInstruction}`;
   if (productURL) {
     prompt += `\n\n## 営業担当が提案する商品/サービス\n参考URL: ${productURL}\n※営業担当がこのサービスについて説明してくるかもしれません。顧客として内容について質問したり、疑問を投げかけてください。`;
   }
   if (goal) {
     prompt += `\n\n## このロープレのゴール設定（営業担当の目標）\n${goal}\n※これは営業担当の目標です。あなたは顧客なので、簡単にはこの目標を達成させないでください。ただし良い提案をされたら段階的に前向きになってください。`;
   }
+  if (state.closingPoints && state.closingPoints.trim()) {
+    prompt += `\n\n## クロージングポイント（重要）
+以下のポイントが営業担当から適切に提示・質問された場合、顧客として前向きに反応し、クロージングに協力的になってください。
+ただし、営業担当がこれらのポイントに触れていない間は、無理に話を進めたり長々と反応したりせず、ためらいや疑問を保ち続けてください。
+${state.closingPoints}`;
+  }
   prompt += `\n\n## 重要なルール
 - 必ず日本語で応答してください
 - あなたは「顧客」です。営業担当者ではありません。この点を絶対に忘れないでください
 - 顧客の立場から、自然で現実的な反応をしてください
 - 簡単には承諾せず、適度に質問や懸念を投げかけてください
-- 1回の応答は2〜4文程度に抑え、会話のテンポを保ってください
+- 無駄に長い応答は避け、簡潔に応答してください（応答スタイルの指示を優先）
 - 相手（営業担当者）の提案が良ければ段階的に前向きになってください
 - 感情的な反応も適度に入れてください（興味、疑問、不安など）
 - 「AI」「ロールプレイ」「シミュレーション」などメタ的な発言は一切しないでください
@@ -393,6 +432,30 @@ function renderSetup() {
             <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-clipboard-check text-blue-400 mr-1"></i>評価基準</label>
             <textarea id="criteria" rows="3" class="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm resize-none" placeholder="評価したい項目を記述してください...">${state.criteria}</textarea>
           </div>
+          <!-- ペルソナ追加パラメータ -->
+          <div class="border-t border-gray-100 pt-5">
+            <p class="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-2"><i class="fas fa-sliders-h text-blue-400"></i>顧客の話し方設定</p>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-2">話すスピード</label>
+                <div class="flex gap-2">
+                  ${PERSONA_SPEEDS.map(s => `<button type="button" onclick="setPersonaSpeed('${s.id}')" id="speed-${s.id}" class="flex-1 px-3 py-2 rounded-lg border-2 text-center transition-all text-xs font-medium ${state.personaSpeed === s.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'}"><div class="font-bold">${s.name}</div><div class="text-[10px] mt-0.5 opacity-70">${s.desc}</div></button>`).join('')}
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-gray-600 mb-2">トーン（口調）</label>
+                <div class="grid grid-cols-2 gap-2">
+                  ${PERSONA_TONES.map(t => `<button type="button" onclick="setPersonaTone('${t.id}')" id="tone-${t.id}" class="px-3 py-2 rounded-lg border-2 text-center transition-all text-xs font-medium ${state.personaTone === t.id ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'}"><div class="font-bold">${t.name}</div><div class="text-[10px] mt-0.5 opacity-70">${t.desc}</div></button>`).join('')}
+                </div>
+              </div>
+            </div>
+          </div>
+          <!-- クロージングポイント -->
+          <div class="border-t border-gray-100 pt-5">
+            <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-flag-checkered text-green-500 mr-1"></i>クロージングポイント</label>
+            <textarea id="closingPoints" rows="3" class="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm resize-none" placeholder="例:&#10;・次回のデモ日程を具体的に提示できたら&#10;・導入後のROIを数値で説明できたら&#10;・顧客が『検討します』ではなく具体的な質問をしてきたら">${state.closingPoints}</textarea>
+            <p class="text-xs text-gray-400 mt-1">この言葉が言えたら・聞けたらクロージングに進めるポイントを設定。AI顧客が適切なタイミングで前向きに反応します。</p>
+          </div>
         </div>
       </div>
 
@@ -450,11 +513,11 @@ window.saveTemplate = () => {
   if (!scenario.trim()) { showToast('シナリオを入力してからテンプレートを保存してください', 'error'); return; }
   const name = prompt('テンプレート名を入力してください:', scenario.substring(0, 30) + '...');
   if (!name) return;
-  state.templates.push({ name, scenario, persona, criteria, productURL, goal, createdAt: Date.now() });
+  state.templates.push({ name, scenario, persona, criteria, productURL, goal, personaSpeed: state.personaSpeed, personaTone: state.personaTone, closingPoints: document.getElementById('closingPoints')?.value || '', createdAt: Date.now() });
   localStorage.setItem('roleplay_templates', JSON.stringify(state.templates));
   render(); showToast(`テンプレート「${name}」を保存しました`, 'success');
 };
-window.loadTemplate = (index) => { const t = state.templates[index]; if (!t) return; state.scenario=t.scenario||''; state.persona=t.persona||''; state.criteria=t.criteria||''; state.productURL=t.productURL||''; state.goal=t.goal||''; render(); showToast(`テンプレート「${t.name}」を読み込みました`, 'success'); };
+window.loadTemplate = (index) => { const t = state.templates[index]; if (!t) return; state.scenario=t.scenario||''; state.persona=t.persona||''; state.criteria=t.criteria||''; state.productURL=t.productURL||''; state.goal=t.goal||''; state.personaSpeed=t.personaSpeed||'normal'; state.personaTone=t.personaTone||'business'; state.closingPoints=t.closingPoints||''; render(); showToast(`テンプレート「${t.name}」を読み込みました`, 'success'); };
 window.deleteTemplate = (index) => { const t = state.templates[index]; if (!t) return; if (!confirm(`テンプレート「${t.name}」を削除しますか？`)) return; state.templates.splice(index, 1); localStorage.setItem('roleplay_templates', JSON.stringify(state.templates)); render(); showToast('テンプレートを削除しました'); };
 window.toggleTemplateList = () => { const list = document.getElementById('templateList'); if (list) list.classList.toggle('hidden'); };
 
@@ -492,6 +555,16 @@ window.onTtsModeChange = (mode) => {
   });
 };
 window.onTtsVoiceChange = () => { const s = document.getElementById('ttsVoice'); if (s) { state.ttsVoice = s.value; localStorage.setItem('roleplay_ttsVoice', s.value); } };
+
+// ===== ペルソナパラメータ =====
+window.setPersonaSpeed = (speed) => {
+  state.personaSpeed = speed; localStorage.setItem('roleplay_personaSpeed', speed);
+  PERSONA_SPEEDS.forEach(s => { const btn = document.getElementById('speed-' + s.id); if (btn) { btn.className = btn.className.replace(s.id === speed ? /border-gray-200 bg-white text-gray-600 hover:border-blue-300/g : /border-blue-500 bg-blue-50 text-blue-700/g, s.id === speed ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'); } });
+};
+window.setPersonaTone = (tone) => {
+  state.personaTone = tone; localStorage.setItem('roleplay_personaTone', tone);
+  PERSONA_TONES.forEach(t => { const btn = document.getElementById('tone-' + t.id); if (btn) { btn.className = btn.className.replace(t.id === tone ? /border-gray-200 bg-white text-gray-600 hover:border-blue-300/g : /border-blue-500 bg-blue-50 text-blue-700/g, t.id === tone ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'); } });
+};
 
 // 接続テスト（直接API呼び出し）
 window.testConnection = async () => {
@@ -534,19 +607,22 @@ function showToast(message, type = 'info') {
 }
 
 window.applyPreset = (key) => {
-  const p = PRESETS[key]; state.scenario=p.scenario; state.persona=p.persona; state.criteria=p.criteria; state.productURL=''; state.goal='';
-  const s=document.getElementById('scenario'); if(s) s.value=p.scenario;
-  const pe=document.getElementById('persona'); if(pe) pe.value=p.persona;
-  const c=document.getElementById('criteria'); if(c) c.value=p.criteria;
-  const pu=document.getElementById('productURL'); if(pu) pu.value='';
-  const g=document.getElementById('goal'); if(g) g.value='';
+  const p = PRESETS[key]; state.scenario=p.scenario; state.persona=p.persona; state.criteria=p.criteria; state.productURL=''; state.goal=''; state.closingPoints='';
+  const el = (id) => document.getElementById(id);
+  if(el('scenario')) el('scenario').value=p.scenario;
+  if(el('persona')) el('persona').value=p.persona;
+  if(el('criteria')) el('criteria').value=p.criteria;
+  if(el('productURL')) el('productURL').value='';
+  if(el('goal')) el('goal').value='';
+  if(el('closingPoints')) el('closingPoints').value='';
   showToast(`「${p.name}」を適用しました`);
 };
 
 window.startRoleplay = () => {
   state.scenario=document.getElementById('scenario').value; state.persona=document.getElementById('persona').value;
   state.criteria=document.getElementById('criteria').value; state.productURL=document.getElementById('productURL')?.value||'';
-  state.goal=document.getElementById('goal')?.value||''; state.autoSpeak=document.getElementById('autoSpeak').checked;
+  state.goal=document.getElementById('goal')?.value||''; state.closingPoints=document.getElementById('closingPoints')?.value||'';
+  state.autoSpeak=document.getElementById('autoSpeak').checked;
   if (!state.apiKey) { showToast('APIキーを設定してください', 'error'); return; }
   if (!state.scenario.trim() || !state.persona.trim()) { showToast('シナリオと顧客ペルソナは必須です', 'error'); return; }
   state.messages=[]; state.turnCount=0; state.currentScreen='roleplay'; state.startTime=Date.now(); state.elapsedSeconds=0; state.showTextInput=false;
@@ -885,6 +961,7 @@ ${state.scenario}
 ${state.persona}
 ${state.productURL ? `\n## 提案商品/サービスURL\n${state.productURL}` : ''}
 ${state.goal ? `\n## 営業のゴール設定\n${state.goal}` : ''}
+${state.closingPoints ? `\n## クロージングポイント\n${state.closingPoints}\n※営業担当がこれらのポイントに到達できたかどうかも評価に含めてください。` : ''}
 
 ## 評価基準
 ${state.criteria}
@@ -917,48 +994,80 @@ ${conversationLog}
 
 function renderFeedback() {
   if (state.isFeedbackLoading) return `<div class="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center"><div class="text-center"><div class="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div><p class="text-lg font-semibold text-gray-700">フィードバックを生成中...</p><p class="text-sm text-gray-500 mt-2">AIが会話を分析しています</p></div></div>`;
-  const fb = state.feedback;
+
+  const fb = state.feedback || {};
   const minutes = Math.floor(state.elapsedSeconds / 60); const seconds = state.elapsedSeconds % 60;
-  const scoreColor = fb.overallScore >= 70 ? 'text-green-600' : fb.overallScore >= 40 ? 'text-yellow-600' : 'text-red-600';
+  const score = typeof fb.overallScore === 'number' ? fb.overallScore : 0;
+  const scoreColor = score >= 70 ? 'text-green-600' : score >= 40 ? 'text-yellow-600' : 'text-red-600';
+  const summary = fb.summary || 'フィードバックデータが取得できませんでした。';
+  const scores = Array.isArray(fb.scores) ? fb.scores : [];
+  const strengths = Array.isArray(fb.strengths) ? fb.strengths : [];
+  const improvements = Array.isArray(fb.improvements) ? fb.improvements : [];
+  const modelAnswer = fb.modelAnswer || '';
+
+  let scoresHtml = '';
+  if (scores.length > 0) {
+    const itemsHtml = scores.map(s => {
+      const sc = typeof s.score === 'number' ? s.score : 0;
+      const ms = typeof s.maxScore === 'number' ? s.maxScore : 10;
+      const pct = ms > 0 ? Math.min((sc / ms) * 100, 100) : 0;
+      const bc = pct >= 70 ? 'bg-green-500' : pct >= 40 ? 'bg-yellow-500' : 'bg-red-500';
+      const tc = pct >= 70 ? 'text-green-600' : pct >= 40 ? 'text-yellow-600' : 'text-red-600';
+      return `<div class="mb-3"><div class="flex justify-between items-center mb-1"><span class="text-sm font-medium text-gray-700 break-words">${escapeHtml(s.criterion || '')}</span><span class="text-sm font-bold ${tc} flex-shrink-0 ml-2">${sc}/${ms}</span></div><div class="w-full bg-gray-100 rounded-full h-2.5 mb-1"><div class="${bc} h-2.5 rounded-full score-bar-fill" style="width:${pct}%"></div></div><p class="text-xs text-gray-500 break-words">${escapeHtml(s.comment || '')}</p></div>`;
+    }).join('');
+    scoresHtml = `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in"><h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i class="fas fa-star text-yellow-500"></i>項目別評価</h2><div>${itemsHtml}</div></div>`;
+  }
+
+  let strengthsHtml = '';
+  if (strengths.length > 0) {
+    strengthsHtml = `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"><h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-thumbs-up text-green-500"></i>良かった点</h2><ul class="space-y-2">${strengths.map(s=>`<li class="flex items-start gap-2 text-sm text-gray-700"><i class="fas fa-check-circle text-green-400 mt-0.5 flex-shrink-0"></i><span class="break-words min-w-0">${escapeHtml(s)}</span></li>`).join('')}</ul></div>`;
+  }
+  let improvementsHtml = '';
+  if (improvements.length > 0) {
+    improvementsHtml = `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"><h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-lightbulb text-orange-500"></i>改善ポイント</h2><ul class="space-y-2">${improvements.map(s=>`<li class="flex items-start gap-2 text-sm text-gray-700"><i class="fas fa-arrow-circle-up text-orange-400 mt-0.5 flex-shrink-0"></i><span class="break-words min-w-0">${escapeHtml(s)}</span></li>`).join('')}</ul></div>`;
+  }
+  let modelAnswerHtml = '';
+  if (modelAnswer) {
+    modelAnswerHtml = `<div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 p-6 slide-in"><h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-trophy text-blue-500"></i>模範的な対応例</h2><p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(modelAnswer)}</p></div>`;
+  }
+  const logsHtml = state.messages.map(m => `<div class="flex items-start gap-2 text-sm ${m.role==='user'?'text-blue-700':'text-gray-700'} py-1"><span class="font-bold flex-shrink-0 whitespace-nowrap">${m.role==='user'?'営業:':'顧客:'}</span><span class="break-words min-w-0">${escapeHtml(m.content)}</span></div>`).join('');
+
   return `
   <div class="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
     <header class="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-10">
       <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
-        <div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center"><i class="fas fa-chart-line text-white text-lg"></i></div><div><h1 class="text-xl font-bold text-gray-800">フィードバック</h1><p class="text-xs text-gray-500">ロープレ結果レポート</p></div></div>
-        <button onclick="backToSetup()" class="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1"><i class="fas fa-redo"></i>もう一度</button>
+        <div class="flex items-center gap-3 min-w-0"><div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center flex-shrink-0"><i class="fas fa-chart-line text-white text-lg"></i></div><div class="min-w-0"><h1 class="text-xl font-bold text-gray-800 truncate">フィードバック</h1><p class="text-xs text-gray-500">ロープレ結果レポート</p></div></div>
+        <button onclick="backToSetup()" class="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1 flex-shrink-0 ml-2"><i class="fas fa-redo"></i>もう一度</button>
       </div>
     </header>
     <main class="max-w-4xl mx-auto px-4 py-8 space-y-6">
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in">
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in overflow-hidden">
         <div class="flex flex-col sm:flex-row items-center gap-6">
-          <div class="relative w-32 h-32 flex-shrink-0">
-            <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36"><path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#e5e7eb" stroke-width="3"/><path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="url(#sg)" stroke-width="3" stroke-dasharray="${fb.overallScore}, 100" stroke-linecap="round"/><defs><linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" style="stop-color:#3b82f6"/><stop offset="100%" style="stop-color:#8b5cf6"/></linearGradient></defs></svg>
-            <div class="absolute inset-0 flex flex-col items-center justify-center"><span class="text-3xl font-bold ${scoreColor}">${fb.overallScore}</span><span class="text-xs text-gray-500">/ 100</span></div>
+          <div class="relative w-28 h-28 sm:w-32 sm:h-32 flex-shrink-0">
+            <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36"><path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#e5e7eb" stroke-width="3"/><path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="url(#sg)" stroke-width="3" stroke-dasharray="${score}, 100" stroke-linecap="round"/><defs><linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" style="stop-color:#3b82f6"/><stop offset="100%" style="stop-color:#8b5cf6"/></linearGradient></defs></svg>
+            <div class="absolute inset-0 flex flex-col items-center justify-center"><span class="text-3xl font-bold ${scoreColor}">${score}</span><span class="text-xs text-gray-500">/ 100</span></div>
           </div>
-          <div class="flex-1 text-center sm:text-left">
-            <p class="text-gray-700 leading-relaxed">${escapeHtml(fb.summary)}</p>
-            <div class="mt-3 flex flex-wrap gap-3 justify-center sm:justify-start">
-              <span class="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full"><i class="fas fa-clock mr-1"></i>${minutes}分${seconds}秒</span>
-              <span class="text-xs bg-purple-50 text-purple-700 px-3 py-1 rounded-full"><i class="fas fa-comments mr-1"></i>${state.turnCount}ターン</span>
-              ${state.goal ? `<span class="text-xs bg-amber-50 text-amber-700 px-3 py-1 rounded-full"><i class="fas fa-bullseye mr-1"></i>目標: ${escapeHtml(state.goal.substring(0, 30))}</span>` : ''}
+          <div class="flex-1 text-center sm:text-left min-w-0">
+            <p class="text-gray-700 leading-relaxed break-words">${escapeHtml(summary)}</p>
+            <div class="mt-3 flex flex-wrap gap-2 justify-center sm:justify-start">
+              <span class="text-xs bg-blue-50 text-blue-700 px-3 py-1 rounded-full whitespace-nowrap"><i class="fas fa-clock mr-1"></i>${minutes}分${seconds}秒</span>
+              <span class="text-xs bg-purple-50 text-purple-700 px-3 py-1 rounded-full whitespace-nowrap"><i class="fas fa-comments mr-1"></i>${state.turnCount}ターン</span>
+              ${state.goal ? `<span class="text-xs bg-amber-50 text-amber-700 px-3 py-1 rounded-full"><i class="fas fa-bullseye mr-1"></i>目標: ${escapeHtml(state.goal.substring(0, 20))}${state.goal.length > 20 ? '...' : ''}</span>` : ''}
             </div>
           </div>
         </div>
       </div>
-      ${fb.scores && fb.scores.length > 0 ? `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in"><h2 class="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2"><i class="fas fa-star text-yellow-500"></i>項目別評価</h2><div class="space-y-4">${fb.scores.map(s => { const pct = (s.score / s.maxScore) * 100; const bc = pct >= 70 ? 'bg-green-500' : pct >= 40 ? 'bg-yellow-500' : 'bg-red-500'; const tc = pct >= 70 ? 'text-green-600' : pct >= 40 ? 'text-yellow-600' : 'text-red-600'; return `<div><div class="flex justify-between items-center mb-1"><span class="text-sm font-medium text-gray-700">${escapeHtml(s.criterion)}</span><span class="text-sm font-bold ${tc}">${s.score}/${s.maxScore}</span></div><div class="w-full bg-gray-100 rounded-full h-2.5 mb-1"><div class="${bc} h-2.5 rounded-full score-bar-fill" style="width:${pct}%"></div></div><p class="text-xs text-gray-500">${escapeHtml(s.comment)}</p></div>`; }).join('')}</div></div>` : ''}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 slide-in">
-        ${fb.strengths?.length ? `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"><h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-thumbs-up text-green-500"></i>良かった点</h2><ul class="space-y-2">${fb.strengths.map(s=>`<li class="flex items-start gap-2 text-sm text-gray-700"><i class="fas fa-check-circle text-green-400 mt-0.5 flex-shrink-0"></i><span>${escapeHtml(s)}</span></li>`).join('')}</ul></div>` : ''}
-        ${fb.improvements?.length ? `<div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"><h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-lightbulb text-orange-500"></i>改善ポイント</h2><ul class="space-y-2">${fb.improvements.map(s=>`<li class="flex items-start gap-2 text-sm text-gray-700"><i class="fas fa-arrow-circle-up text-orange-400 mt-0.5 flex-shrink-0"></i><span>${escapeHtml(s)}</span></li>`).join('')}</ul></div>` : ''}
-      </div>
-      ${fb.modelAnswer ? `<div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl border border-blue-200 p-6 slide-in"><h2 class="text-lg font-bold text-gray-800 mb-3 flex items-center gap-2"><i class="fas fa-trophy text-blue-500"></i>模範的な対応例</h2><p class="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">${escapeHtml(fb.modelAnswer)}</p></div>` : ''}
-      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in">
+      ${scoresHtml}
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 slide-in">${strengthsHtml}${improvementsHtml}</div>
+      ${modelAnswerHtml}
+      <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in overflow-hidden">
         <details><summary class="cursor-pointer text-lg font-bold text-gray-800 flex items-center gap-2"><i class="fas fa-scroll text-gray-500"></i>会話ログ</summary>
-          <div class="mt-4 space-y-3 max-h-96 overflow-y-auto chat-scroll">${state.messages.map(m => `<div class="flex items-start gap-2 text-sm ${m.role==='user'?'text-blue-700':'text-gray-700'}"><span class="font-bold flex-shrink-0">${m.role==='user'?'営業（あなた）：':'顧客（AI）：'}</span><span>${escapeHtml(m.content)}</span></div>`).join('')}</div>
+          <div class="mt-4 space-y-1 max-h-96 overflow-y-auto chat-scroll">${logsHtml}</div>
         </details>
       </div>
-      <div class="text-center pb-8 slide-in flex flex-wrap justify-center gap-4">
-        <button onclick="downloadFeedbackCSV()" class="bg-white border-2 border-green-500 text-green-700 hover:bg-green-50 px-8 py-3 rounded-2xl font-bold shadow-sm inline-flex items-center gap-2 transition-all"><i class="fas fa-file-csv"></i>CSVダウンロード</button>
-        <button onclick="backToSetup()" class="btn-primary text-white px-10 py-3 rounded-2xl font-bold shadow-lg inline-flex items-center gap-2"><i class="fas fa-redo"></i>もう一度ロープレする</button>
+      <div class="text-center pb-8 slide-in flex flex-wrap justify-center gap-3">
+        <button onclick="downloadFeedbackCSV()" class="bg-white border-2 border-green-500 text-green-700 hover:bg-green-50 px-6 py-3 rounded-2xl font-bold shadow-sm inline-flex items-center gap-2 transition-all text-sm"><i class="fas fa-file-csv"></i>CSVダウンロード</button>
+        <button onclick="backToSetup()" class="btn-primary text-white px-8 py-3 rounded-2xl font-bold shadow-lg inline-flex items-center gap-2 text-sm"><i class="fas fa-redo"></i>もう一度ロープレする</button>
       </div>
     </main>
   </div>`;
