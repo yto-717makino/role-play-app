@@ -351,12 +351,18 @@ function renderSetup() {
           </div>
 
           <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2">
-              <i class="fas fa-user-tie text-blue-400 mr-1"></i>顧客ペルソナ <span class="text-red-500">*</span>
-            </label>
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-sm font-semibold text-gray-700">
+                <i class="fas fa-user-tie text-blue-400 mr-1"></i>顧客ペルソナ <span class="text-red-500">*</span>
+              </label>
+              <button onclick="generatePersona()" class="text-xs bg-purple-100 hover:bg-purple-200 text-purple-700 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all" id="generatePersonaBtn">
+                <i class="fas fa-magic"></i>AIで自動生成
+              </button>
+            </div>
             <textarea id="persona" rows="3"
               class="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm resize-none"
               placeholder="顧客の役職、性格、懸念事項などを記述してください...">${state.persona}</textarea>
+            <p class="text-xs text-gray-400 mt-1">AIで自動生成ボタンを押すと、シナリオに基づいたペルソナをランダムで作成します</p>
           </div>
 
           <div>
@@ -1521,10 +1527,7 @@ function renderFeedback() {
 
       ${scoresHtml}
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 slide-in">
-        ${strengthsHtml}
-        ${improvementsHtml}
-      </div>
+      ${(strengthsHtml && improvementsHtml) ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 slide-in">${strengthsHtml}${improvementsHtml}</div>` : (strengthsHtml || improvementsHtml) ? `<div class="slide-in">${strengthsHtml}${improvementsHtml}</div>` : ''}
 
       ${modelAnswerHtml}
 
@@ -1656,4 +1659,55 @@ window.backToSetup = () => {
   state.isListening = false;
   state.turnCount = 0;
   render();
+};
+
+// ============================================================
+// ペルソナ自動生成（ChatGPT API連携）
+// ============================================================
+window.generatePersona = async () => {
+  syncStateFromForm();
+  const scenario = state.scenario;
+  if (!scenario.trim()) { showToast('先にシナリオを入力してください', 'error'); return; }
+  if (!state.apiKey) { showToast('APIキーを設定してください', 'error'); return; }
+
+  const btn = document.getElementById('generatePersonaBtn');
+  const originalHTML = btn.innerHTML;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>生成中...';
+  btn.disabled = true;
+
+  try {
+    const prompt = `以下の営業シナリオに登場する「顧客」のペルソナを1つ作成してください。
+毎回異なるバリエーション（名前、年齢、性格、懸念事項、口調など）をランダムに生成してください。
+
+## シナリオ
+${scenario}
+
+## 出力形式
+以下の要素を含む日本語のペルソナ文（3〜5文）を返してください:
+- 名前と肩書き（年齢も含む）
+- 性格・経歴の特徴
+- 主な懸念事項や関心事
+- 会話時の特徴的な態度や口癖
+
+ペルソナ文のみを返してください。前置きや説明は不要です。`;
+
+    const res = await fetch('/api/generate-persona', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scenario, apiKey: state.apiKey, baseURL: state.baseURL, model: state.model }),
+    });
+    if (!res.ok) { const err = await res.json(); throw new Error(err.error || 'APIエラー'); }
+    const data = await res.json();
+    if (data.persona && data.persona.trim()) {
+      document.getElementById('persona').value = data.persona.trim();
+      state.persona = data.persona.trim();
+      showToast('ペルソナを生成しました！（再クリックで別パターン）', 'success');
+    } else { throw new Error('空の応答'); }
+  } catch (e) {
+    console.error('Persona generation error:', e);
+    showToast(`ペルソナ生成に失敗しました: ${e.message}`, 'error');
+  }
+
+  btn.innerHTML = originalHTML;
+  btn.disabled = false;
 };

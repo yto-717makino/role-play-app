@@ -288,6 +288,62 @@ ${conversationLog}
 });
 
 // ============================
+// API: ペルソナ自動生成
+// ============================
+app.post('/api/generate-persona', async (req, res) => {
+  try {
+    const { scenario, apiKey, baseURL, model } = req.body;
+
+    if (!apiKey) {
+      return res.status(400).json({ error: 'APIキーが設定されていません' });
+    }
+    if (!scenario || !scenario.trim()) {
+      return res.status(400).json({ error: 'シナリオが空です' });
+    }
+
+    const prompt = `以下の営業シナリオに登場する「顧客」のペルソナを1つ作成してください。
+毎回異なるバリエーション（名前、年齢、性格、懸念事項、口調など）をランダムに生成してください。
+
+## シナリオ
+${scenario}
+
+## 出力形式
+以下の要素を含む日本語のペルソナ文（3〜5文）を返してください:
+- 名前と肩書き（年齢も含む）
+- 性格・経歴の特徴
+- 主な懸念事項や関心事
+- 会話時の特徴的な態度や口癖
+
+ペルソナ文のみを返してください。前置きや説明は不要です。`;
+
+    const response = await callResponsesAPI(
+      apiKey,
+      baseURL || DEFAULT_BASE_URL,
+      model || DEFAULT_MODEL,
+      [{ role: 'user', content: prompt }],
+      {
+        stream: false,
+        reasoningEffort: 'none',
+        temperature: 1.2,
+        max_output_tokens: 400,
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text();
+      return res.status(response.status).json({ error: `API エラー (${response.status}): ${errText}` });
+    }
+
+    const result = await response.json();
+    const persona = extractTextFromResponse(result);
+    return res.json({ persona: persona.trim() });
+  } catch (e) {
+    console.error('Persona generation error:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================
 // API: 接続テスト
 // ============================
 app.post('/api/test-connection', async (req, res) => {

@@ -277,9 +277,20 @@ const PRESETS = {
 };
 
 function loadPresets() {
-  state.scenario = PRESETS.newBiz.scenario;
-  state.persona = PRESETS.newBiz.persona;
-  state.criteria = PRESETS.newBiz.criteria;
+  if (!state.scenario) state.scenario = PRESETS.newBiz.scenario;
+  if (!state.persona) state.persona = PRESETS.newBiz.persona;
+  if (!state.criteria) state.criteria = PRESETS.newBiz.criteria;
+}
+
+// ===== フォームの入力値をstateに同期 =====
+function syncStateFromForm() {
+  const el = (id) => document.getElementById(id);
+  if (el('scenario')) state.scenario = el('scenario').value;
+  if (el('persona')) state.persona = el('persona').value;
+  if (el('criteria')) state.criteria = el('criteria').value;
+  if (el('productURL')) state.productURL = el('productURL').value;
+  if (el('goal')) state.goal = el('goal').value;
+  if (el('closingPoints')) state.closingPoints = el('closingPoints').value;
 }
 
 // ===== レンダリング =====
@@ -386,6 +397,17 @@ function renderSetup() {
               <div class="text-xs text-gray-500 line-clamp-2">${p.scenario.substring(0, 60)}...</div>
             </button>`).join('')}
         </div>
+
+        <!-- テンプレートエクスポート/インポート -->
+        <div class="flex gap-2 mt-2">
+          <button onclick="exportTemplates()" class="text-xs text-gray-500 hover:text-blue-600 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-blue-300 transition-all bg-white">
+            <i class="fas fa-file-export"></i>エクスポート
+          </button>
+          <button onclick="importTemplates()" class="text-xs text-gray-500 hover:text-blue-600 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-blue-300 transition-all bg-white">
+            <i class="fas fa-file-import"></i>インポート
+          </button>
+        </div>
+
         <div id="templateList" class="hidden mt-3 space-y-2">
           ${state.templates.map((t, i) => `
             <div class="flex items-center gap-2 p-3 rounded-xl border border-gray-200 bg-white hover:border-blue-200 transition-colors">
@@ -415,8 +437,14 @@ function renderSetup() {
             <textarea id="scenario" rows="3" class="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm resize-none" placeholder="営業シーンの状況を記述してください...">${state.scenario}</textarea>
           </div>
           <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-user-tie text-blue-400 mr-1"></i>顧客ペルソナ <span class="text-red-500">*</span></label>
+            <div class="flex items-center justify-between mb-2">
+              <label class="block text-sm font-semibold text-gray-700"><i class="fas fa-user-tie text-blue-400 mr-1"></i>顧客ペルソナ <span class="text-red-500">*</span></label>
+              <button onclick="generatePersona()" class="text-xs bg-purple-100 hover:bg-purple-200 text-purple-700 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg transition-all" id="generatePersonaBtn">
+                <i class="fas fa-magic"></i>AIで自動生成
+              </button>
+            </div>
             <textarea id="persona" rows="3" class="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm resize-none" placeholder="顧客の役職、性格、懸念事項などを記述してください...">${state.persona}</textarea>
+            <p class="text-xs text-gray-400 mt-1">AIで自動生成ボタンを押すと、シナリオに基づいたペルソナをランダムで作成します</p>
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-link text-blue-400 mr-1"></i>商品/サービスサイトURL</label>
@@ -505,21 +533,78 @@ function renderSetup() {
 // テンプレート管理
 // ============================================================
 window.saveTemplate = () => {
-  const scenario = document.getElementById('scenario')?.value || '';
-  const persona = document.getElementById('persona')?.value || '';
-  const criteria = document.getElementById('criteria')?.value || '';
-  const productURL = document.getElementById('productURL')?.value || '';
-  const goal = document.getElementById('goal')?.value || '';
+  syncStateFromForm();
+  const scenario = state.scenario;
+  const persona = state.persona;
+  const criteria = state.criteria;
+  const productURL = state.productURL;
+  const goal = state.goal;
+  const closingPoints = state.closingPoints;
+
   if (!scenario.trim()) { showToast('シナリオを入力してからテンプレートを保存してください', 'error'); return; }
   const name = prompt('テンプレート名を入力してください:', scenario.substring(0, 30) + '...');
   if (!name) return;
-  state.templates.push({ name, scenario, persona, criteria, productURL, goal, personaSpeed: state.personaSpeed, personaTone: state.personaTone, closingPoints: document.getElementById('closingPoints')?.value || '', createdAt: Date.now() });
+  state.templates.push({ name, scenario, persona, criteria, productURL, goal, personaSpeed: state.personaSpeed, personaTone: state.personaTone, closingPoints, createdAt: Date.now() });
   localStorage.setItem('roleplay_templates', JSON.stringify(state.templates));
-  render(); showToast(`テンプレート「${name}」を保存しました`, 'success');
+  render();
+  showToast(`テンプレート「${name}」を保存しました`, 'success');
 };
-window.loadTemplate = (index) => { const t = state.templates[index]; if (!t) return; state.scenario=t.scenario||''; state.persona=t.persona||''; state.criteria=t.criteria||''; state.productURL=t.productURL||''; state.goal=t.goal||''; state.personaSpeed=t.personaSpeed||'normal'; state.personaTone=t.personaTone||'business'; state.closingPoints=t.closingPoints||''; render(); showToast(`テンプレート「${t.name}」を読み込みました`, 'success'); };
-window.deleteTemplate = (index) => { const t = state.templates[index]; if (!t) return; if (!confirm(`テンプレート「${t.name}」を削除しますか？`)) return; state.templates.splice(index, 1); localStorage.setItem('roleplay_templates', JSON.stringify(state.templates)); render(); showToast('テンプレートを削除しました'); };
+window.loadTemplate = (index) => {
+  const t = state.templates[index]; if (!t) return;
+  state.scenario = t.scenario || ''; state.persona = t.persona || ''; state.criteria = t.criteria || '';
+  state.productURL = t.productURL || ''; state.goal = t.goal || '';
+  state.personaSpeed = t.personaSpeed || 'normal'; state.personaTone = t.personaTone || 'business';
+  state.closingPoints = t.closingPoints || '';
+  render(); showToast(`テンプレート「${t.name}」を読み込みました`, 'success');
+};
+window.deleteTemplate = (index) => {
+  const t = state.templates[index]; if (!t) return;
+  if (!confirm(`テンプレート「${t.name}」を削除しますか？`)) return;
+  state.templates.splice(index, 1); localStorage.setItem('roleplay_templates', JSON.stringify(state.templates));
+  render(); showToast('テンプレートを削除しました');
+};
 window.toggleTemplateList = () => { const list = document.getElementById('templateList'); if (list) list.classList.toggle('hidden'); };
+
+// ===== テンプレートエクスポート/インポート =====
+window.exportTemplates = () => {
+  if (state.templates.length === 0) { showToast('エクスポートするテンプレートがありません', 'error'); return; }
+  const data = JSON.stringify(state.templates, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const now = new Date();
+  const fileName = `ロープレテンプレート_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.json`;
+  const a = document.createElement('a'); a.href = url; a.download = fileName; a.style.display = 'none';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  showToast(`${state.templates.length}件のテンプレートをエクスポートしました`, 'success');
+};
+
+window.importTemplates = () => {
+  const input = document.createElement('input'); input.type = 'file'; input.accept = '.json'; input.style.display = 'none';
+  input.onchange = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const imported = JSON.parse(ev.target.result);
+        if (!Array.isArray(imported)) throw new Error('invalid');
+        let count = 0;
+        for (const t of imported) {
+          if (t.scenario && t.persona) {
+            const exists = state.templates.some(ex => ex.name === t.name && ex.scenario === t.scenario);
+            if (!exists) { state.templates.push(t); count++; }
+          }
+        }
+        localStorage.setItem('roleplay_templates', JSON.stringify(state.templates));
+        syncStateFromForm(); render();
+        showToast(`${count}件のテンプレートをインポートしました`, 'success');
+      } catch (err) { showToast('ファイルの読み込みに失敗しました。正しいJSONファイルを選択してください。', 'error'); }
+    };
+    reader.readAsText(file);
+  };
+  document.body.appendChild(input); input.click();
+  setTimeout(() => document.body.removeChild(input), 1000);
+};
 
 // ============================================================
 // API設定
@@ -1058,7 +1143,7 @@ function renderFeedback() {
         </div>
       </div>
       ${scoresHtml}
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 slide-in">${strengthsHtml}${improvementsHtml}</div>
+      ${(strengthsHtml && improvementsHtml) ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-6 slide-in">${strengthsHtml}${improvementsHtml}</div>` : (strengthsHtml || improvementsHtml) ? `<div class="slide-in">${strengthsHtml}${improvementsHtml}</div>` : ''}
       ${modelAnswerHtml}
       <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 slide-in overflow-hidden">
         <details><summary class="cursor-pointer text-lg font-bold text-gray-800 flex items-center gap-2"><i class="fas fa-scroll text-gray-500"></i>会話ログ</summary>
@@ -1169,6 +1254,56 @@ window.downloadFeedbackCSV = () => {
 };
 
 window.backToSetup = () => { state.currentScreen='setup'; state.messages=[]; state.feedback=null; state.isFeedbackLoading=false; state.isProcessing=false; state.isSpeaking=false; state.isListening=false; state.turnCount=0; render(); };
+
+// ============================================================
+// ペルソナ自動生成（ChatGPT API連携）
+// ============================================================
+window.generatePersona = async () => {
+  const scenario = document.getElementById('scenario')?.value || '';
+  if (!scenario.trim()) { showToast('先にシナリオを入力してください', 'error'); return; }
+  if (!state.apiKey) { showToast('APIキーを設定してください', 'error'); return; }
+
+  const btn = document.getElementById('generatePersonaBtn');
+  const originalHTML = btn.innerHTML;
+  btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>生成中...';
+  btn.disabled = true;
+
+  try {
+    const prompt = `以下の営業シナリオに登場する「顧客」のペルソナを1つ作成してください。
+毎回異なるバリエーション（名前、年齢、性格、懸念事項、口調など）をランダムに生成してください。
+
+## シナリオ
+${scenario}
+
+## 出力形式
+以下の要素を含む日本語のペルソナ文（3〜5文）を返してください:
+- 名前と肩書き（年齢も含む）
+- 性格・経歴の特徴
+- 主な懸念事項や関心事
+- 会話時の特徴的な態度や口癖
+
+ペルソナ文のみを返してください。前置きや説明は不要です。`;
+
+    const response = await callResponsesAPI(
+      [{ role: 'user', content: prompt }],
+      { stream: false, reasoningEffort: 'none', temperature: 1.2, max_output_tokens: 400 }
+    );
+    if (!response.ok) { const e = await response.text(); throw new Error(`API エラー (${response.status})`); }
+    const result = await response.json();
+    const persona = extractTextFromResponse(result);
+    if (persona && persona.trim()) {
+      document.getElementById('persona').value = persona.trim();
+      state.persona = persona.trim();
+      showToast('ペルソナを生成しました！（再クリックで別パターン）', 'success');
+    } else { throw new Error('空の応答'); }
+  } catch (e) {
+    console.error('Persona generation error:', e);
+    showToast(`ペルソナ生成に失敗しました: ${e.message}`, 'error');
+  }
+
+  btn.innerHTML = originalHTML;
+  btn.disabled = false;
+};
 </script>
 </body>
 </html>
