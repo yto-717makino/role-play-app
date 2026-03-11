@@ -785,6 +785,9 @@ window.startRoleplay = () => {
   if (!state.apiKey) { showToast('APIキーを設定してください', 'error'); return; }
   if (!state.scenario.trim() || !state.persona.trim()) { showToast('シナリオと顧客ペルソナは必須です', 'error'); return; }
 
+  // モバイル: ユーザータップ直後にオーディオをアンロック
+  unlockAudio();
+
   state.messages = [];
   state.turnCount = 0;
   state.currentScreen = 'roleplay';
@@ -1049,14 +1052,17 @@ async function readStream(response) {
 // ============================================================
 // 音声認識（マイク）
 // ============================================================
-window.toggleListening = () => { state.isListening ? stopListening() : startListening(); };
+window.toggleListening = () => {
+  // マイクボタンタップ時にもオーディオをアンロック（追加の安全策）
+  unlockAudio();
+  state.isListening ? stopListening() : startListening();
+};
 
 // ===== 発話完了・送信ボタン =====
 window.sendVoiceMessage = () => {
-  // 音声認識から蓄積されたテキストを送信
+  // 送信ボタンタップ時にもオーディオをアンロック
+  unlockAudio();
   if (!state.isListening) return;
-  const recognition = state.recognition;
-  // recognition の内部 finalTranscript を取得するため、interimTranscript を利用
   const text = state._voiceTranscript || '';
   if (!text.trim()) {
     showToast('まだ音声が認識されていません。話してからボタンを押してください。', 'error');
@@ -1252,6 +1258,8 @@ window.toggleTextInput = () => {
 };
 
 window.sendText = () => {
+  // テキスト送信ボタンタップ時にもオーディオをアンロック
+  unlockAudio();
   const input = document.getElementById('textInput');
   if (input && input.value.trim()) { sendMessage(input.value); input.value = ''; }
 };
@@ -1260,6 +1268,56 @@ window.sendText = () => {
 // 音声合成（TTS） - OpenAI TTS API / ブラウザ音声の切り替え
 // ============================================================
 let currentAudio = null;
+
+// ===== モバイルブラウザ用オーディオアンロック =====
+// iOS Safari / Android Chrome ではユーザーインタラクション時にオーディオコンテキストを
+// 明示的にアンロックしないと、後続の非同期再生がブロックされる
+let _audioContext = null;
+let _audioUnlocked = false;
+let _preloadedAudio = null;  // 事前に作成しておくAudioオブジェクト
+
+function getAudioContext() {
+  if (!_audioContext) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) _audioContext = new AC();
+  }
+  return _audioContext;
+}
+
+// ユーザーインタラクション時に呼ぶ: AudioContext の resume + Audio の事前再生
+function unlockAudio() {
+  if (_audioUnlocked) return;
+  
+  // 1) AudioContext をアンロック
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === 'suspended') {
+    ctx.resume().catch(() => {});
+  }
+  
+  // 2) HTMLAudioElement を事前にユーザージェスチャーで play() しておく
+  //    → 以降 src を差し替えて play() しても再生許可が維持される
+  if (!_preloadedAudio) {
+    _preloadedAudio = new Audio();
+    // 無音のdata URI（極短mp3）を再生してアンロック
+    _preloadedAudio.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAABhgFzzzEAAAAAAAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAABhgFzzzEAAAAAAAAAAAAAAAAAAAAA';
+    _preloadedAudio.volume = 0.01;  // ほぼ無音
+    _preloadedAudio.play().then(() => {
+      _preloadedAudio.pause();
+      _preloadedAudio.currentTime = 0;
+    }).catch(() => {});
+  }
+  
+  // 3) SpeechSynthesis のアンロック（iOS Safari 用）
+  try {
+    const u = new SpeechSynthesisUtterance('');
+    u.volume = 0;
+    state.synthesis.speak(u);
+    state.synthesis.cancel();
+  } catch (e) {}
+  
+  _audioUnlocked = true;
+  console.log('[TTS] Audio unlocked for mobile');
+}
 
 function speak(text, onComplete) {
   if (state.ttsMode === 'api') {
@@ -1298,7 +1356,16 @@ async function speakWithAPI(text, onComplete) {
     
     if (currentAudio) { currentAudio.pause(); currentAudio = null; }
     
-    const audio = new Audio(url);
+    // モバイル対応: 事前アンロック済みの Audio オブジェクトを再利用するか新規作成
+    let audio;
+    if (_preloadedAudio) {
+      audio = _preloadedAudio;
+      _preloadedAudio = null; // 使い切り → 次回は新規作成
+    } else {
+      audio = new Audio();
+    }
+    audio.src = url;
+    audio.volume = 1.0;
     currentAudio = audio;
     
     audio.onended = () => {
@@ -1317,9 +1384,17 @@ async function speakWithAPI(text, onComplete) {
       speakWithBrowser(text, onComplete);
     };
     
-    audio.play().catch(() => {
+    // AudioContext 経由でも再生を試みる（モバイルでより確実）
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {});
+    }
+    
+    audio.play().catch((e) => {
+      console.warn('Audio play() blocked:', e.message);
       state.isSpeaking = false;
       updateMicUI();
+      URL.revokeObjectURL(url);
       speakWithBrowser(text, onComplete);
     });
   } catch (e) {
@@ -1333,17 +1408,37 @@ async function speakWithAPI(text, onComplete) {
 // ブラウザ内蔵の音声合成（フォールバック）
 function speakWithBrowser(text, onComplete) {
   state.synthesis.cancel();
+  
+  // iOS Safari ではバグで onend が発火しないことがあるため、タイムアウトも設定
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = 'ja-JP';
   utterance.rate = 1.1;
   utterance.pitch = 1.0;
   if (state.selectedVoice) utterance.voice = state.selectedVoice;
 
+  let completed = false;
+  const finish = () => {
+    if (completed) return;
+    completed = true;
+    state.isSpeaking = false;
+    updateMicUI();
+    if (onComplete) onComplete();
+  };
+
   utterance.onstart = () => { state.isSpeaking = true; updateMicUI(); };
-  utterance.onend = () => { state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
-  utterance.onerror = () => { state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
+  utterance.onend = finish;
+  utterance.onerror = finish;
 
   state.synthesis.speak(utterance);
+  
+  // iOS Safari の onend 未発火対策: 推定読み上げ時間 + バッファでタイムアウト
+  const estimatedMs = Math.max(text.length * 150, 3000) + 2000;
+  setTimeout(() => {
+    if (!completed && !state.synthesis.speaking) {
+      console.warn('[TTS] SpeechSynthesis onend did not fire, forcing completion');
+      finish();
+    }
+  }, estimatedMs);
 }
 
 function scrollChatToBottom() {
@@ -1357,7 +1452,7 @@ window.endRoleplay = () => {
 
   stopListening();
   state.synthesis.cancel();
-  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  if (currentAudio) { currentAudio.pause(); currentAudio.src = ''; currentAudio = null; }
   clearInterval(state.timerInterval);
   state.isListening = false;
   state.isSpeaking = false;

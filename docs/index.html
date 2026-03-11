@@ -710,6 +710,8 @@ window.startRoleplay = () => {
   state.autoSpeak=document.getElementById('autoSpeak').checked;
   if (!state.apiKey) { showToast('APIキーを設定してください', 'error'); return; }
   if (!state.scenario.trim() || !state.persona.trim()) { showToast('シナリオと顧客ペルソナは必須です', 'error'); return; }
+  // モバイル: ユーザータップ直後にオーディオをアンロック
+  unlockAudio();
   state.messages=[]; state.turnCount=0; state.currentScreen='roleplay'; state.startTime=Date.now(); state.elapsedSeconds=0; state.showTextInput=false;
   render(); startTimer(); generateAIFirstMessage();
 };
@@ -887,9 +889,13 @@ async function readStream(response) {
 // ============================================================
 // 音声認識
 // ============================================================
-window.toggleListening = () => { state.isListening ? stopListening() : startListening(); };
+window.toggleListening = () => {
+  unlockAudio();
+  state.isListening ? stopListening() : startListening();
+};
 
 window.sendVoiceMessage = () => {
+  unlockAudio();
   if (!state.isListening) return;
   const text = state._voiceTranscript || '';
   if (!text.trim()) { showToast('まだ音声が認識されていません。話してからボタンを押してください。', 'error'); return; }
@@ -980,12 +986,41 @@ async function sendMessage(text) {
 }
 
 window.toggleTextInput = () => { state.showTextInput = !state.showTextInput; const a = document.getElementById('textInputArea'); if (a) { a.classList.toggle('hidden', !state.showTextInput); if (state.showTextInput) document.getElementById('textInput')?.focus(); } };
-window.sendText = () => { const i = document.getElementById('textInput'); if (i && i.value.trim()) { sendMessage(i.value); i.value = ''; } };
+window.sendText = () => { unlockAudio(); const i = document.getElementById('textInput'); if (i && i.value.trim()) { sendMessage(i.value); i.value = ''; } };
 
 // ============================================================
 // TTS
 // ============================================================
 let currentAudio = null;
+
+// ===== モバイルブラウザ用オーディオアンロック =====
+let _audioContext = null;
+let _audioUnlocked = false;
+let _preloadedAudio = null;
+
+function getAudioContext() {
+  if (!_audioContext) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) _audioContext = new AC();
+  }
+  return _audioContext;
+}
+
+function unlockAudio() {
+  if (_audioUnlocked) return;
+  const ctx = getAudioContext();
+  if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+  if (!_preloadedAudio) {
+    _preloadedAudio = new Audio();
+    _preloadedAudio.src = 'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAABhgFzzzEAAAAAAAAAAAAAAAAAAAAA//tQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7//////////////////////////////////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAABhgFzzzEAAAAAAAAAAAAAAAAAAAAA';
+    _preloadedAudio.volume = 0.01;
+    _preloadedAudio.play().then(() => { _preloadedAudio.pause(); _preloadedAudio.currentTime = 0; }).catch(() => {});
+  }
+  try { const u = new SpeechSynthesisUtterance(''); u.volume = 0; state.synthesis.speak(u); state.synthesis.cancel(); } catch (e) {}
+  _audioUnlocked = true;
+  console.log('[TTS] Audio unlocked for mobile');
+}
+
 function speak(text, onComplete) { if (state.ttsMode === 'api') speakWithAPI(text, onComplete); else speakWithBrowser(text, onComplete); }
 
 async function speakWithAPI(text, onComplete) {
@@ -1002,10 +1037,19 @@ async function speakWithAPI(text, onComplete) {
     if (!response.ok) { console.warn('TTS API failed, falling back to browser TTS'); speakWithBrowser(text, onComplete); return; }
     const blob = await response.blob(); const audioUrl = URL.createObjectURL(blob);
     if (currentAudio) { currentAudio.pause(); currentAudio = null; }
-    const audio = new Audio(audioUrl); currentAudio = audio;
+
+    // モバイル対応: 事前アンロック済みの Audio オブジェクトを再利用
+    let audio;
+    if (_preloadedAudio) { audio = _preloadedAudio; _preloadedAudio = null; } else { audio = new Audio(); }
+    audio.src = audioUrl; audio.volume = 1.0;
+    currentAudio = audio;
     audio.onended = () => { URL.revokeObjectURL(audioUrl); currentAudio = null; state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
     audio.onerror = () => { URL.revokeObjectURL(audioUrl); currentAudio = null; state.isSpeaking = false; updateMicUI(); speakWithBrowser(text, onComplete); };
-    audio.play().catch(() => { state.isSpeaking = false; updateMicUI(); speakWithBrowser(text, onComplete); });
+
+    const ctx = getAudioContext();
+    if (ctx && ctx.state === 'suspended') await ctx.resume().catch(() => {});
+
+    audio.play().catch((e) => { console.warn('Audio play() blocked:', e.message); state.isSpeaking = false; updateMicUI(); URL.revokeObjectURL(audioUrl); speakWithBrowser(text, onComplete); });
   } catch (e) { console.warn('TTS API error:', e); state.isSpeaking = false; updateMicUI(); speakWithBrowser(text, onComplete); }
 }
 
@@ -1013,10 +1057,15 @@ function speakWithBrowser(text, onComplete) {
   state.synthesis.cancel();
   const u = new SpeechSynthesisUtterance(text); u.lang = 'ja-JP'; u.rate = 1.1; u.pitch = 1.0;
   if (state.selectedVoice) u.voice = state.selectedVoice;
+  let completed = false;
+  const finish = () => { if (completed) return; completed = true; state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
   u.onstart = () => { state.isSpeaking = true; updateMicUI(); };
-  u.onend = () => { state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
-  u.onerror = () => { state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
+  u.onend = finish;
+  u.onerror = finish;
   state.synthesis.speak(u);
+  // iOS Safari の onend 未発火対策
+  const estimatedMs = Math.max(text.length * 150, 3000) + 2000;
+  setTimeout(() => { if (!completed && !state.synthesis.speaking) { console.warn('[TTS] forcing completion'); finish(); } }, estimatedMs);
 }
 
 function scrollChatToBottom() { setTimeout(() => { const el = document.getElementById('chatArea'); if (el) el.scrollTop = el.scrollHeight; }, 100); }
@@ -1025,7 +1074,7 @@ function scrollChatToBottom() { setTimeout(() => { const el = document.getElemen
 window.endRoleplay = () => {
   if (state.messages.length < 2) { showToast('もう少し会話を続けてからフィードバックを受けましょう', 'error'); return; }
   if (!confirm('ロープレを終了してフィードバックを受けますか？')) return;
-  stopListening(); state.synthesis.cancel(); if (currentAudio) { currentAudio.pause(); currentAudio = null; }
+  stopListening(); state.synthesis.cancel(); if (currentAudio) { currentAudio.pause(); currentAudio.src = ''; currentAudio = null; }
   clearInterval(state.timerInterval); state.isListening = false; state.isSpeaking = false;
   state.currentScreen = 'feedback'; state.isFeedbackLoading = true; render(); generateFeedback();
 };
