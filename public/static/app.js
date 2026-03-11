@@ -51,10 +51,10 @@ const PERSONA_SPEEDS = [
   { id: 'fast', name: '早口', desc: 'テンポよく短く話す', icon: 'fa-person-running' },
 ];
 const PERSONA_TONES = [
-  { id: 'gentle', name: '穏やか', desc: '柔らかく丁寧な口調' },
-  { id: 'firm', name: '固め', desc: '堅実で厳格な口調' },
-  { id: 'friendly', name: 'フレンドリー', desc: '親しみやすい口調' },
-  { id: 'business', name: 'ビジネスライク', desc: '簡潔で効率的な口調' },
+  { id: 'gentle', name: '穏やか', desc: '腰が低く丁寧な話し方' },
+  { id: 'firm', name: '固め', desc: '芝居敷が短く核心を突く' },
+  { id: 'friendly', name: 'フレンドリー', desc: '明るく打ち解けた雰囲気' },
+  { id: 'business', name: 'ビジネスライク', desc: '淡々と効率重視' },
 ];
 
 // ===== 既知モデル一覧 =====
