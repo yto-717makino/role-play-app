@@ -91,9 +91,7 @@ const state = {
   isListening: false, isSpeaking: false, isProcessing: false,
   startTime: null, elapsedSeconds: 0, timerInterval: null, turnCount: 0,
   recognition: null,
-  synthesis: window.speechSynthesis,
-  selectedVoice: null,
-  ttsMode: localStorage.getItem('roleplay_ttsMode') || 'api',
+  ttsMode: 'api',
   ttsVoice: localStorage.getItem('roleplay_ttsVoice') || 'coral',
   feedback: null, isFeedbackLoading: false,
   autoSpeak: true, interimTranscript: '', showTextInput: false,
@@ -237,23 +235,9 @@ ${state.closingPoints}`;
 // 初期化
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
-  initVoices();
   loadPresets();
   render();
 });
-
-function initVoices() {
-  const setVoice = () => {
-    const voices = state.synthesis.getVoices();
-    state.selectedVoice =
-      voices.find(v => v.lang === 'ja-JP' && v.name.includes('Google')) ||
-      voices.find(v => v.lang === 'ja-JP') ||
-      voices.find(v => v.lang.startsWith('ja')) ||
-      voices[0];
-  };
-  setVoice();
-  state.synthesis.onvoiceschanged = setVoice;
-}
 
 const PRESETS = {
   newBiz: {
@@ -498,24 +482,12 @@ function renderSetup() {
             </label>
           </div>
           <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2">読み上げ方式</label>
-            <div class="grid grid-cols-2 gap-3">
-              <label class="flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${state.ttsMode === 'api' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-300'}">
-                <input type="radio" name="ttsMode" value="api" ${state.ttsMode === 'api' ? 'checked' : ''} onchange="onTtsModeChange(this.value)" class="mt-1">
-                <div><div class="text-sm font-semibold text-gray-800">OpenAI TTS <span class="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full ml-1">推奨</span></div><div class="text-xs text-gray-500 mt-0.5">gpt-4o-mini-tts による高品質な自然音声（API課金あり）</div></div>
-              </label>
-              <label class="flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${state.ttsMode === 'browser' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-300'}">
-                <input type="radio" name="ttsMode" value="browser" ${state.ttsMode === 'browser' ? 'checked' : ''} onchange="onTtsModeChange(this.value)" class="mt-1">
-                <div><div class="text-sm font-semibold text-gray-800">ブラウザ音声</div><div class="text-xs text-gray-500 mt-0.5">ブラウザ内蔵の音声合成（無料・機械的）</div></div>
-              </label>
-            </div>
-          </div>
-          <div id="ttsVoiceSection" class="${state.ttsMode === 'api' ? '' : 'hidden'}">
             <label class="block text-sm font-semibold text-gray-700 mb-2">TTSボイス</label>
             <select id="ttsVoice" onchange="onTtsVoiceChange()" class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm bg-white">
               ${TTS_VOICES.map(v => `<option value="${v.id}" ${state.ttsVoice === v.id ? 'selected' : ''}>${v.name} - ${v.desc}</option>`).join('')}
             </select>
           </div>
+          <p class="text-xs text-gray-400 mt-1">OpenAI gpt-4o-mini-tts による高品質な日本語音声で読み上げます（API課金あり）</p>
         </div>
       </div>
 
@@ -629,16 +601,6 @@ function getSelectedModel() {
 }
 
 window.onModelSelectChange = () => { const sel = document.getElementById('model'); const ci = document.getElementById('modelCustom'); if (sel && ci) { ci.classList.toggle('hidden', sel.value !== 'custom'); if (sel.value === 'custom') ci.focus(); } };
-window.onTtsModeChange = (mode) => {
-  state.ttsMode = mode; localStorage.setItem('roleplay_ttsMode', mode);
-  const section = document.getElementById('ttsVoiceSection');
-  if (section) section.classList.toggle('hidden', mode !== 'api');
-  document.querySelectorAll('label:has(input[name="ttsMode"])').forEach(l => {
-    const r = l.querySelector('input');
-    if (r.checked) { l.className = l.className.replace(/border-gray-200 bg-white hover:border-blue-300/g, 'border-blue-500 bg-blue-50'); if (!l.className.includes('border-blue-500')) l.className = l.className.replace(/border-gray-200/g, 'border-blue-500').replace(/bg-white/g, 'bg-blue-50'); }
-    else { l.className = l.className.replace(/border-blue-500 bg-blue-50/g, 'border-gray-200 bg-white hover:border-blue-300'); }
-  });
-};
 window.onTtsVoiceChange = () => { const s = document.getElementById('ttsVoice'); if (s) { state.ttsVoice = s.value; localStorage.setItem('roleplay_ttsVoice', s.value); } };
 
 // ===== ペルソナパラメータ =====
@@ -934,7 +896,7 @@ function createRecognition() {
 
 function startListening() {
   if (state.isSpeaking || state.isProcessing) return;
-  state.synthesis.cancel(); state.isSpeaking = false;
+  state.isSpeaking = false;
   if (state.recognition) { try { state.recognition.abort(); } catch(e) {} state.recognition = null; }
   const recognition = createRecognition(); if (!recognition) return;
   try { recognition.start(); state.recognition = recognition; state.isListening = true; state._voiceTranscript = ''; render(); scrollChatToBottom(); } catch (e) { showToast('マイクの起動に失敗しました。', 'error'); }
@@ -1016,12 +978,11 @@ function unlockAudio() {
     _preloadedAudio.volume = 0.01;
     _preloadedAudio.play().then(() => { _preloadedAudio.pause(); _preloadedAudio.currentTime = 0; }).catch(() => {});
   }
-  try { const u = new SpeechSynthesisUtterance(''); u.volume = 0; state.synthesis.speak(u); state.synthesis.cancel(); } catch (e) {}
   _audioUnlocked = true;
   console.log('[TTS] Audio unlocked for mobile');
 }
 
-function speak(text, onComplete) { if (state.ttsMode === 'api') speakWithAPI(text, onComplete); else speakWithBrowser(text, onComplete); }
+function speak(text, onComplete) { speakWithAPI(text, onComplete); }
 
 async function speakWithAPI(text, onComplete) {
   state.isSpeaking = true; updateMicUI();
@@ -1034,7 +995,7 @@ async function speakWithAPI(text, onComplete) {
       body: JSON.stringify({ model: 'gpt-4o-mini-tts', input: text, voice: state.ttsVoice || 'coral', response_format: 'mp3',
         instructions: '自然な日本語で話してください。ビジネスの打ち合わせで実際に話しているような口調で、適度な間や感情の起伏を含めて読み上げてください。' }),
     });
-    if (!response.ok) { console.warn('TTS API failed, falling back to browser TTS'); speakWithBrowser(text, onComplete); return; }
+    if (!response.ok) { console.warn('TTS API failed:', response.status); state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); return; }
     const blob = await response.blob(); const audioUrl = URL.createObjectURL(blob);
     if (currentAudio) { currentAudio.pause(); currentAudio = null; }
 
@@ -1044,28 +1005,13 @@ async function speakWithAPI(text, onComplete) {
     audio.src = audioUrl; audio.volume = 1.0;
     currentAudio = audio;
     audio.onended = () => { URL.revokeObjectURL(audioUrl); currentAudio = null; state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
-    audio.onerror = () => { URL.revokeObjectURL(audioUrl); currentAudio = null; state.isSpeaking = false; updateMicUI(); speakWithBrowser(text, onComplete); };
+    audio.onerror = () => { URL.revokeObjectURL(audioUrl); currentAudio = null; state.isSpeaking = false; updateMicUI(); console.warn('Audio playback error'); if (onComplete) onComplete(); };
 
     const ctx = getAudioContext();
     if (ctx && ctx.state === 'suspended') await ctx.resume().catch(() => {});
 
-    audio.play().catch((e) => { console.warn('Audio play() blocked:', e.message); state.isSpeaking = false; updateMicUI(); URL.revokeObjectURL(audioUrl); speakWithBrowser(text, onComplete); });
-  } catch (e) { console.warn('TTS API error:', e); state.isSpeaking = false; updateMicUI(); speakWithBrowser(text, onComplete); }
-}
-
-function speakWithBrowser(text, onComplete) {
-  state.synthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text); u.lang = 'ja-JP'; u.rate = 1.1; u.pitch = 1.0;
-  if (state.selectedVoice) u.voice = state.selectedVoice;
-  let completed = false;
-  const finish = () => { if (completed) return; completed = true; state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); };
-  u.onstart = () => { state.isSpeaking = true; updateMicUI(); };
-  u.onend = finish;
-  u.onerror = finish;
-  state.synthesis.speak(u);
-  // iOS Safari の onend 未発火対策
-  const estimatedMs = Math.max(text.length * 150, 3000) + 2000;
-  setTimeout(() => { if (!completed && !state.synthesis.speaking) { console.warn('[TTS] forcing completion'); finish(); } }, estimatedMs);
+    audio.play().catch((e) => { console.warn('Audio play() blocked:', e.message); state.isSpeaking = false; updateMicUI(); URL.revokeObjectURL(audioUrl); if (onComplete) onComplete(); });
+  } catch (e) { console.warn('TTS API error:', e); state.isSpeaking = false; updateMicUI(); if (onComplete) onComplete(); }
 }
 
 function scrollChatToBottom() { setTimeout(() => { const el = document.getElementById('chatArea'); if (el) el.scrollTop = el.scrollHeight; }, 100); }
@@ -1074,7 +1020,7 @@ function scrollChatToBottom() { setTimeout(() => { const el = document.getElemen
 window.endRoleplay = () => {
   if (state.messages.length < 2) { showToast('もう少し会話を続けてからフィードバックを受けましょう', 'error'); return; }
   if (!confirm('ロープレを終了してフィードバックを受けますか？')) return;
-  stopListening(); state.synthesis.cancel(); if (currentAudio) { currentAudio.pause(); currentAudio.src = ''; currentAudio = null; }
+  stopListening(); if (currentAudio) { currentAudio.pause(); currentAudio.src = ''; currentAudio = null; }
   clearInterval(state.timerInterval); state.isListening = false; state.isSpeaking = false;
   state.currentScreen = 'feedback'; state.isFeedbackLoading = true; render(); generateFeedback();
 };

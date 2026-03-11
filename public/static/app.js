@@ -30,12 +30,8 @@ const state = {
   elapsedSeconds: 0,
   timerInterval: null,
   turnCount: 0,
-  // 音声
-  recognition: null,
-  synthesis: window.speechSynthesis,
-  selectedVoice: null,
   // TTS設定
-  ttsMode: localStorage.getItem('roleplay_ttsMode') || 'api',
+  ttsMode: 'api',
   ttsVoice: localStorage.getItem('roleplay_ttsVoice') || 'coral',
   // フィードバック
   feedback: null,
@@ -90,24 +86,9 @@ const TTS_VOICES = [
 
 // ===== 初期化 =====
 document.addEventListener('DOMContentLoaded', () => {
-  initVoices();
   loadPresets();
   render();
 });
-
-// ===== ブラウザ音声初期化（フォールバック用） =====
-function initVoices() {
-  const setVoice = () => {
-    const voices = state.synthesis.getVoices();
-    state.selectedVoice =
-      voices.find(v => v.lang === 'ja-JP' && v.name.includes('Google')) ||
-      voices.find(v => v.lang === 'ja-JP') ||
-      voices.find(v => v.lang.startsWith('ja')) ||
-      voices[0];
-  };
-  setVoice();
-  state.synthesis.onvoiceschanged = setVoice;
-}
 
 // ===== プリセット =====
 const PRESETS = {
@@ -460,33 +441,13 @@ function renderSetup() {
           </div>
 
           <div>
-            <label class="block text-sm font-semibold text-gray-700 mb-2">読み上げ方式</label>
-            <div class="grid grid-cols-2 gap-3">
-              <label class="flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${state.ttsMode === 'api' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-300'}">
-                <input type="radio" name="ttsMode" value="api" ${state.ttsMode === 'api' ? 'checked' : ''} onchange="onTtsModeChange(this.value)" class="mt-1">
-                <div>
-                  <div class="text-sm font-semibold text-gray-800">OpenAI TTS <span class="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full ml-1">推奨</span></div>
-                  <div class="text-xs text-gray-500 mt-0.5">gpt-4o-mini-tts による高品質な自然音声（API課金あり）</div>
-                </div>
-              </label>
-              <label class="flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-all ${state.ttsMode === 'browser' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-blue-300'}">
-                <input type="radio" name="ttsMode" value="browser" ${state.ttsMode === 'browser' ? 'checked' : ''} onchange="onTtsModeChange(this.value)" class="mt-1">
-                <div>
-                  <div class="text-sm font-semibold text-gray-800">ブラウザ音声</div>
-                  <div class="text-xs text-gray-500 mt-0.5">ブラウザ内蔵の音声合成（無料・機械的）</div>
-                </div>
-              </label>
-            </div>
-          </div>
-
-          <div id="ttsVoiceSection" class="${state.ttsMode === 'api' ? '' : 'hidden'}">
             <label class="block text-sm font-semibold text-gray-700 mb-2">TTSボイス</label>
             <select id="ttsVoice" onchange="onTtsVoiceChange()" class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm bg-white">
               ${TTS_VOICES.map(v => `
                 <option value="${v.id}" ${state.ttsVoice === v.id ? 'selected' : ''}>${v.name} - ${v.desc}</option>
               `).join('')}
             </select>
-            <p class="text-xs text-gray-400 mt-1">OpenAI TTS APIの音声を選択します。日本語の読み上げに対応しています。</p>
+            <p class="text-xs text-gray-400 mt-1">OpenAI gpt-4o-mini-tts による高品質な日本語音声で読み上げます（API課金あり）</p>
           </div>
         </div>
       </div>
@@ -647,23 +608,6 @@ window.onModelSelectChange = () => {
     customInput.classList.toggle('hidden', sel.value !== 'custom');
     if (sel.value === 'custom') customInput.focus();
   }
-};
-
-window.onTtsModeChange = (mode) => {
-  state.ttsMode = mode;
-  localStorage.setItem('roleplay_ttsMode', mode);
-  const section = document.getElementById('ttsVoiceSection');
-  if (section) section.classList.toggle('hidden', mode !== 'api');
-  // ラジオボタンの親要素のスタイルを更新
-  document.querySelectorAll('label:has(input[name="ttsMode"])').forEach(l => {
-    const radio = l.querySelector('input');
-    if (radio.checked) {
-      l.className = l.className.replace(/border-gray-200 bg-white hover:border-blue-300/g, 'border-blue-500 bg-blue-50');
-      if (!l.className.includes('border-blue-500')) l.className = l.className.replace(/border-gray-200/g, 'border-blue-500').replace(/bg-white/g, 'bg-blue-50');
-    } else {
-      l.className = l.className.replace(/border-blue-500 bg-blue-50/g, 'border-gray-200 bg-white hover:border-blue-300');
-    }
-  });
 };
 
 window.onTtsVoiceChange = () => {
@@ -1139,7 +1083,6 @@ function createRecognition() {
 
 function startListening() {
   if (state.isSpeaking || state.isProcessing) return;
-  state.synthesis.cancel();
   state.isSpeaking = false;
   if (state.recognition) { try { state.recognition.abort(); } catch(e) {} state.recognition = null; }
 
@@ -1307,24 +1250,14 @@ function unlockAudio() {
     }).catch(() => {});
   }
   
-  // 3) SpeechSynthesis のアンロック（iOS Safari 用）
-  try {
-    const u = new SpeechSynthesisUtterance('');
-    u.volume = 0;
-    state.synthesis.speak(u);
-    state.synthesis.cancel();
-  } catch (e) {}
+  // 3) SpeechSynthesis のアンロックは不要（ブラウザTTS削除済み）
   
   _audioUnlocked = true;
   console.log('[TTS] Audio unlocked for mobile');
 }
 
 function speak(text, onComplete) {
-  if (state.ttsMode === 'api') {
-    speakWithAPI(text, onComplete);
-  } else {
-    speakWithBrowser(text, onComplete);
-  }
+  speakWithAPI(text, onComplete);
 }
 
 // OpenAI TTS API 経由の音声合成
@@ -1346,8 +1279,10 @@ async function speakWithAPI(text, onComplete) {
     });
 
     if (!response.ok) {
-      console.warn('TTS API failed, falling back to browser TTS');
-      speakWithBrowser(text, onComplete);
+      console.warn('TTS API failed, status:', response.status);
+      state.isSpeaking = false;
+      updateMicUI();
+      if (onComplete) onComplete();
       return;
     }
 
@@ -1380,8 +1315,8 @@ async function speakWithAPI(text, onComplete) {
       currentAudio = null;
       state.isSpeaking = false;
       updateMicUI();
-      console.warn('Audio playback error, falling back to browser TTS');
-      speakWithBrowser(text, onComplete);
+      console.warn('Audio playback error');
+      if (onComplete) onComplete();
     };
     
     // AudioContext 経由でも再生を試みる（モバイルでより確実）
@@ -1395,50 +1330,14 @@ async function speakWithAPI(text, onComplete) {
       state.isSpeaking = false;
       updateMicUI();
       URL.revokeObjectURL(url);
-      speakWithBrowser(text, onComplete);
+      if (onComplete) onComplete();
     });
   } catch (e) {
     console.warn('TTS API error:', e);
     state.isSpeaking = false;
     updateMicUI();
-    speakWithBrowser(text, onComplete);
-  }
-}
-
-// ブラウザ内蔵の音声合成（フォールバック）
-function speakWithBrowser(text, onComplete) {
-  state.synthesis.cancel();
-  
-  // iOS Safari ではバグで onend が発火しないことがあるため、タイムアウトも設定
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'ja-JP';
-  utterance.rate = 1.1;
-  utterance.pitch = 1.0;
-  if (state.selectedVoice) utterance.voice = state.selectedVoice;
-
-  let completed = false;
-  const finish = () => {
-    if (completed) return;
-    completed = true;
-    state.isSpeaking = false;
-    updateMicUI();
     if (onComplete) onComplete();
-  };
-
-  utterance.onstart = () => { state.isSpeaking = true; updateMicUI(); };
-  utterance.onend = finish;
-  utterance.onerror = finish;
-
-  state.synthesis.speak(utterance);
-  
-  // iOS Safari の onend 未発火対策: 推定読み上げ時間 + バッファでタイムアウト
-  const estimatedMs = Math.max(text.length * 150, 3000) + 2000;
-  setTimeout(() => {
-    if (!completed && !state.synthesis.speaking) {
-      console.warn('[TTS] SpeechSynthesis onend did not fire, forcing completion');
-      finish();
-    }
-  }, estimatedMs);
+  }
 }
 
 function scrollChatToBottom() {
@@ -1451,7 +1350,6 @@ window.endRoleplay = () => {
   if (!confirm('ロープレを終了してフィードバックを受けますか？')) return;
 
   stopListening();
-  state.synthesis.cancel();
   if (currentAudio) { currentAudio.pause(); currentAudio.src = ''; currentAudio = null; }
   clearInterval(state.timerInterval);
   state.isListening = false;
