@@ -91,13 +91,13 @@ app.use((req, res, next) => {
 // ============================
 app.post('/api/chat', async (req, res) => {
   try {
-    const { messages, scenario, persona, apiKey, baseURL, model, isFirstMessage, productURL, goal, personaSpeed, personaTone, closingPoints } = req.body;
+    const { messages, scenario, persona, apiKey, baseURL, model, isFirstMessage, productURL, goal, personaSpeed, personaTone, closingPoints, documentContent, documentMode } = req.body;
 
     if (!apiKey) {
       return res.status(400).json({ error: 'APIキーが設定されていません' });
     }
 
-    const systemPrompt = buildSystemPrompt(scenario, persona, productURL, goal, personaSpeed, personaTone, closingPoints);
+    const systemPrompt = buildSystemPrompt(scenario, persona, productURL, goal, personaSpeed, personaTone, closingPoints, documentContent, documentMode);
 
     // Responses API の input を構築
     // role: developer(=system), user, assistant
@@ -194,7 +194,7 @@ app.post('/api/chat', async (req, res) => {
 // ============================
 app.post('/api/feedback', async (req, res) => {
   try {
-    const { messages, scenario, persona, criteria, apiKey, baseURL, model, productURL, goal, closingPoints } = req.body;
+    const { messages, scenario, persona, criteria, apiKey, baseURL, model, productURL, goal, closingPoints, documentContent, documentMode } = req.body;
 
     if (!apiKey) {
       return res.status(400).json({ error: 'APIキーが設定されていません' });
@@ -215,6 +215,7 @@ ${persona}
 ${productURL ? `\n## 提案商品/サービスURL\n${productURL}` : ''}
 ${goal ? `\n## 営業のゴール設定\n${goal}` : ''}
 ${closingPoints ? `\n## クロージングポイント\n${closingPoints}\n※営業担当がこれらのポイントに到達できたかどうかも評価に含めてください。` : ''}
+${documentContent ? `\n## 提案書情報\n営業担当は以下の提案書を${documentMode === 'pre-shared' ? '事前共有' : 'その場で提示'}しました。\n${documentContent}\n\n※提案書の活用度も評価に含めてください:\n- 提案書の内容を適切に活用して説明できたか\n- 顧客の質問に対して提案書の内容を引用・参照できたか\n${documentMode === 'on-the-spot' ? '- 提案書を適切なタイミングで提示できたか' : '- 事前共有された内容について顧客の疑問に適切に対応できたか'}` : ''}
 
 ## 評価基準
 ${criteria}
@@ -474,7 +475,7 @@ server.listen(PORT, '0.0.0.0', () => {
 // ============================
 // システムプロンプト構築
 // ============================
-function buildSystemPrompt(scenario, persona, productURL, goal, personaSpeed, personaTone, closingPoints) {
+function buildSystemPrompt(scenario, persona, productURL, goal, personaSpeed, personaTone, closingPoints, documentContent, documentMode) {
   // 話すスピード設定
   const speedMap = {
     slow: '話すテンポはゆっくりめ。一つの質問や話題に対してじっくり考えてから答えるタイプ。「うーん、そうですねえ…」「少し考えさせてくださいね」のように、間やためらいを自然に混ぜてOK。応答は2〜4文程度。',
@@ -508,6 +509,25 @@ ${persona}
 
   if (productURL) {
     prompt += `\n\n## 営業担当が提案する商品/サービス\n参考URL: ${productURL}\n※営業担当がこのサービスについて説明してくるかもしれません。顧客として内容について質問したり、疑問を投げかけてください。`;
+  }
+
+  if (documentContent && documentMode) {
+    if (documentMode === 'pre-shared') {
+      prompt += `\n\n## 提案書（事前共有済み）
+以下は営業担当から事前に共有された提案書の内容です。あなた（顧客）はこの内容をすでに読んでおり、理解しています。
+提案書の内容に基づいて具体的な質問をしたり、記載内容について言及してください。
+ただし、すべてを肯定する必要はありません。疑問点や懸念を投げかけてください。
+
+${documentContent}`;
+    } else if (documentMode === 'on-the-spot') {
+      prompt += `\n\n## 提案書（その場で説明モード）
+営業担当は提案書を持参しています。以下はその内容ですが、あなた（顧客）はまだこの内容を知りません。
+営業担当が「お見せします」「ご説明します」「資料をご覧ください」などの発言をするまでは、提案書の内容について一切言及しないでください。
+営業担当が提案書の説明を始めた後は、内容について質問や反応をしてください。
+
+※内部参照用（顧客として直接言及しないこと）:
+${documentContent}`;
+    }
   }
 
   if (goal) {
