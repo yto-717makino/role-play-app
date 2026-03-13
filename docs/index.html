@@ -96,6 +96,11 @@ const state = {
   feedback: null, isFeedbackLoading: false,
   autoSpeak: true, interimTranscript: '', showTextInput: false,
   templates: JSON.parse(localStorage.getItem('roleplay_templates') || '[]'),
+  // 提案書ライブラリ
+  documents: JSON.parse(localStorage.getItem('roleplay_documents') || '[]'),
+  documentId: '',
+  documentMode: '',
+  documentEnabled: false,
 };
 
 const PERSONA_SPEEDS = [
@@ -177,7 +182,7 @@ function extractTextFromResponse(responseData) {
   return responseData.output_text || '';
 }
 
-function buildSystemPrompt(scenario, persona, productURL, goal) {
+function buildSystemPrompt(scenario, persona, productURL, goal, documentContent, documentMode) {
   const speedMap = {
     slow: '話すテンポはゆっくりめ。一つの質問や話題に対してじっくり考えてから答えるタイプ。「うーん、そうですねえ…」「少し考えさせてくださいね」のように、間やためらいを自然に混ぜてOK。応答は2〜4文程度。',
     normal: '自然な会話のテンポで応答。特に意識せず、普通のビジネスの打ち合わせのテンポで。応答は2〜3文程度。',
@@ -207,6 +212,24 @@ ${persona}
 - トーン: ${toneInstruction}`;
   if (productURL) {
     prompt += `\n\n## 営業担当が提案する商品/サービス\n参考URL: ${productURL}\n※営業担当がこのサービスについて説明してくるかもしれません。顧客として内容について質問したり、疑問を投げかけてください。`;
+  }
+  if (documentContent && documentMode) {
+    if (documentMode === 'pre-shared') {
+      prompt += `\n\n## 提案書（事前共有済み）
+以下は営業担当から事前に共有された提案書の内容です。あなた（顧客）はこの内容をすでに読んでおり、理解しています。
+提案書の内容に基づいて具体的な質問をしたり、記載内容について言及してください。
+ただし、すべてを肯定する必要はありません。疑問点や懸念を投げかけてください。
+
+${documentContent}`;
+    } else if (documentMode === 'on-the-spot') {
+      prompt += `\n\n## 提案書（その場で説明モード）
+営業担当は提案書を持参しています。以下はその内容ですが、あなた（顧客）はまだこの内容を知りません。
+営業担当が「お見せします」「ご説明します」「資料をご覧ください」などの発言をするまでは、提案書の内容について一切言及しないでください。
+営業担当が提案書の説明を始めた後は、内容について質問や反応をしてください。
+
+※内部参照用（顧客として直接言及しないこと）:
+${documentContent}`;
+    }
   }
   if (goal) {
     prompt += `\n\n## このロープレのゴール設定（営業担当の目標）\n${goal}\n※これは営業担当の目標です。あなたは顧客なので、簡単にはこの目標を達成させないでください。ただし良い提案をされたら段階的に前向きになってください。`;
@@ -281,6 +304,11 @@ function syncStateFromForm() {
   if (el('productURL')) state.productURL = el('productURL').value;
   if (el('goal')) state.goal = el('goal').value;
   if (el('closingPoints')) state.closingPoints = el('closingPoints').value;
+  // 提案書設定
+  const docToggle = el('documentEnabled');
+  if (docToggle) state.documentEnabled = docToggle.checked;
+  const docSelect = el('documentId');
+  if (docSelect) state.documentId = docSelect.value;
 }
 
 // ===== レンダリング =====
@@ -406,6 +434,7 @@ function renderSetup() {
                   <span class="text-sm font-semibold text-gray-800">${escapeHtml(t.name)}</span>
                   ${t.productURL ? '<span class="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">URL付き</span>' : ''}
                   ${t.goal ? '<span class="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full">目標付き</span>' : ''}
+                  ${t.documentId ? '<span class="text-[10px] bg-teal-100 text-teal-600 px-1.5 py-0.5 rounded-full">提案書付き</span>' : ''}
                 </div>
                 <div class="text-xs text-gray-500 mt-0.5">${escapeHtml(t.scenario.substring(0, 60))}...</div>
                 ${t.createdAt ? '<div class="text-[10px] text-gray-400 mt-0.5">' + new Date(t.createdAt).toLocaleDateString('ja-JP') + ' 保存</div>' : ''}
@@ -441,6 +470,93 @@ function renderSetup() {
             <input id="productURL" type="url" value="${state.productURL}" class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm" placeholder="https://example.com/product（任意）">
             <p class="text-xs text-gray-400 mt-1">営業で提案する商品・サービスの参考URLを入力するとAIが参照します</p>
           </div>
+
+          <!-- 提案書設定 -->
+          <div class="border-t border-gray-100 pt-5">
+            <div class="flex items-center justify-between mb-3">
+              <p class="text-sm font-semibold text-gray-700 flex items-center gap-2">
+                <i class="fas fa-file-powerpoint text-teal-500"></i>提案書設定
+              </p>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" id="documentEnabled" ${state.documentEnabled ? 'checked' : ''} onchange="toggleDocumentEnabled()" class="sr-only peer">
+                <div class="w-11 h-6 bg-gray-300 rounded-full peer peer-checked:bg-teal-500 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+              </label>
+            </div>
+
+            <div id="documentDetail" class="${state.documentEnabled ? '' : 'hidden'} space-y-4">
+              ${state.documents.length > 0 ? `
+                <div>
+                  <label class="block text-xs font-semibold text-gray-600 mb-2">使用する提案書</label>
+                  <select id="documentId" onchange="onDocumentSelectChange()" class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm bg-white">
+                    <option value="">-- 提案書を選択 --</option>
+                    ${state.documents.map(d => `<option value="${d.id}" ${state.documentId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}（${d.sections.length}セクション）</option>`).join('')}
+                  </select>
+                </div>
+
+                <div>
+                  <label class="block text-xs font-semibold text-gray-600 mb-2">顧客の資料認知モード</label>
+                  <div class="grid grid-cols-2 gap-2">
+                    <button type="button" onclick="setDocumentMode('pre-shared')" id="docmode-pre-shared"
+                      class="px-3 py-2.5 rounded-lg border-2 text-center transition-all text-xs font-medium
+                        ${state.documentMode === 'pre-shared' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'}">
+                      <div class="font-bold"><i class="fas fa-eye mr-1"></i>事前共有済み</div>
+                      <div class="text-[10px] mt-0.5 opacity-70">顧客は内容を把握済み</div>
+                    </button>
+                    <button type="button" onclick="setDocumentMode('on-the-spot')" id="docmode-on-the-spot"
+                      class="px-3 py-2.5 rounded-lg border-2 text-center transition-all text-xs font-medium
+                        ${state.documentMode === 'on-the-spot' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'}">
+                      <div class="font-bold"><i class="fas fa-eye-slash mr-1"></i>その場で説明</div>
+                      <div class="text-[10px] mt-0.5 opacity-70">営業が提示するまで未知</div>
+                    </button>
+                  </div>
+                </div>
+
+                <div id="docPreview" class="${state.documentId ? '' : 'hidden'} space-y-1">
+                  ${(() => {
+                    const doc = state.documents.find(d => d.id === state.documentId);
+                    if (!doc) return '';
+                    return doc.sections.map(s =>
+                      '<details class="border border-gray-100 rounded-lg">' +
+                        '<summary class="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">' + escapeHtml(s.title) + '</summary>' +
+                        '<p class="px-3 py-2 text-xs text-gray-500 whitespace-pre-wrap border-t border-gray-100">' + escapeHtml(s.content.substring(0, 200)) + (s.content.length > 200 ? '...' : '') + '</p>' +
+                      '</details>'
+                    ).join('');
+                  })()}
+                </div>
+              ` : '<p class="text-xs text-gray-400">提案書がまだインポートされていません。下のライブラリ管理からインポートしてください。</p>'}
+
+              <div class="border-t border-gray-100 pt-3">
+                <div class="flex items-center justify-between mb-2">
+                  <button onclick="toggleDocLibrary()" class="text-xs text-teal-600 hover:text-teal-800 font-medium flex items-center gap-1">
+                    <i class="fas fa-book mr-1"></i>提案書ライブラリ管理 (${state.documents.length})
+                  </button>
+                  <div class="flex gap-2">
+                    <button onclick="importDocument()" class="text-xs text-gray-500 hover:text-teal-600 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-teal-300 transition-all bg-white">
+                      <i class="fas fa-file-import"></i>インポート
+                    </button>
+                    <button onclick="exportDocuments()" class="text-xs text-gray-500 hover:text-teal-600 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-teal-300 transition-all bg-white">
+                      <i class="fas fa-file-export"></i>エクスポート
+                    </button>
+                  </div>
+                </div>
+                <div id="docLibrary" class="hidden space-y-2 mt-2">
+                  ${state.documents.length > 0 ? state.documents.map(d => `
+                    <div class="flex items-center gap-2 p-3 rounded-xl border border-gray-200 bg-white">
+                      <div class="flex-1 min-w-0">
+                        <div class="text-sm font-medium text-gray-800 truncate">${escapeHtml(d.name)}</div>
+                        <div class="text-[10px] text-gray-400">${d.sections.length}セクション | ${d.createdAt ? new Date(d.createdAt).toLocaleDateString('ja-JP') : ''}</div>
+                      </div>
+                      <button onclick="deleteDocument('${d.id}')" class="text-gray-400 hover:text-red-500 transition-colors p-2" title="削除">
+                        <i class="fas fa-trash-alt text-sm"></i>
+                      </button>
+                    </div>
+                  `).join('') : '<p class="text-xs text-gray-400 text-center py-2">提案書はありません</p>'}
+                </div>
+              </div>
+            </div>
+            <p class="text-xs text-gray-400 mt-2">提案書を使ったロープレを行う場合はONにしてください。JSON形式でインポートできます。</p>
+          </div>
+
           <div>
             <label class="block text-sm font-semibold text-gray-700 mb-2"><i class="fas fa-bullseye text-blue-400 mr-1"></i>ゴール設定</label>
             <textarea id="goal" rows="2" class="w-full px-4 py-3 border border-gray-300 rounded-xl text-sm resize-none" placeholder="例: 次回のデモ日程を取り付ける / 上位プランの見積もり依頼を獲得する">${state.goal}</textarea>
@@ -522,7 +638,7 @@ window.saveTemplate = () => {
   if (!scenario.trim()) { showToast('シナリオを入力してからテンプレートを保存してください', 'error'); return; }
   const name = prompt('テンプレート名を入力してください:', scenario.substring(0, 30) + '...');
   if (!name) return;
-  state.templates.push({ name, scenario, persona, criteria, productURL, goal, personaSpeed: state.personaSpeed, personaTone: state.personaTone, closingPoints, createdAt: Date.now() });
+  state.templates.push({ name, scenario, persona, criteria, productURL, goal, personaSpeed: state.personaSpeed, personaTone: state.personaTone, closingPoints, documentId: state.documentEnabled ? state.documentId : '', documentMode: state.documentEnabled ? state.documentMode : '', createdAt: Date.now() });
   localStorage.setItem('roleplay_templates', JSON.stringify(state.templates));
   render();
   showToast(`テンプレート「${name}」を保存しました`, 'success');
@@ -533,6 +649,14 @@ window.loadTemplate = (index) => {
   state.productURL = t.productURL || ''; state.goal = t.goal || '';
   state.personaSpeed = t.personaSpeed || 'normal'; state.personaTone = t.personaTone || 'business';
   state.closingPoints = t.closingPoints || '';
+  // 提案書設定の復元
+  state.documentId = t.documentId || '';
+  state.documentMode = t.documentMode || '';
+  if (state.documentId) {
+    const docExists = state.documents.some(d => d.id === state.documentId);
+    if (docExists) { state.documentEnabled = true; }
+    else { state.documentId = ''; state.documentMode = ''; state.documentEnabled = false; showToast('テンプレートに紐付いた提案書がライブラリにありません', 'error'); }
+  } else { state.documentEnabled = false; }
   render(); showToast(`テンプレート「${t.name}」を読み込みました`, 'success');
 };
 window.deleteTemplate = (index) => {
@@ -661,6 +785,7 @@ function showToast(message, type = 'info') {
 
 window.applyPreset = (key) => {
   const p = PRESETS[key]; state.scenario=p.scenario; state.persona=p.persona; state.criteria=p.criteria; state.productURL=''; state.goal=''; state.closingPoints='';
+  state.documentEnabled = false; state.documentId = ''; state.documentMode = '';
   const el = (id) => document.getElementById(id);
   if(el('scenario')) el('scenario').value=p.scenario;
   if(el('persona')) el('persona').value=p.persona;
@@ -668,6 +793,9 @@ window.applyPreset = (key) => {
   if(el('productURL')) el('productURL').value='';
   if(el('goal')) el('goal').value='';
   if(el('closingPoints')) el('closingPoints').value='';
+  if(el('documentEnabled')) el('documentEnabled').checked = false;
+  const docDetail = document.getElementById('documentDetail');
+  if (docDetail) docDetail.classList.add('hidden');
   showToast(`「${p.name}」を適用しました`);
 };
 
@@ -675,6 +803,12 @@ window.startRoleplay = () => {
   state.scenario=document.getElementById('scenario').value; state.persona=document.getElementById('persona').value;
   state.criteria=document.getElementById('criteria').value; state.productURL=document.getElementById('productURL')?.value||'';
   state.goal=document.getElementById('goal')?.value||''; state.closingPoints=document.getElementById('closingPoints')?.value||'';
+  // 提案書設定を読み取り
+  const docToggle = document.getElementById('documentEnabled');
+  state.documentEnabled = docToggle ? docToggle.checked : false;
+  const docSelect = document.getElementById('documentId');
+  state.documentId = docSelect ? docSelect.value : '';
+  if (!state.documentEnabled) { state.documentId = ''; state.documentMode = ''; }
   state.autoSpeak=document.getElementById('autoSpeak').checked;
   if (!state.apiKey) { showToast('APIキーを設定してください', 'error'); return; }
   if (!state.scenario.trim() || !state.persona.trim()) { showToast('シナリオと顧客ペルソナは必須です', 'error'); return; }
@@ -749,6 +883,129 @@ function renderChatBubble(msg, index) {
 
 function escapeHtml(text) { const d = document.createElement('div'); d.textContent = text; return d.innerHTML; }
 
+// ============================================================
+// 提案書ライブラリ管理
+// ============================================================
+function saveDocumentsToStorage() {
+  localStorage.setItem('roleplay_documents', JSON.stringify(state.documents));
+}
+
+function getDocumentContentForAPI() {
+  if (!state.documentEnabled || !state.documentId) return { documentContent: '', documentMode: '' };
+  const doc = state.documents.find(d => d.id === state.documentId);
+  if (!doc) return { documentContent: '', documentMode: '' };
+  const content = doc.sections.map(s => `### ${s.title}\n${s.content}`).join('\n\n');
+  return {
+    documentContent: `提案書: ${doc.name}\n\n${content}`,
+    documentMode: state.documentMode || 'pre-shared',
+  };
+}
+
+window.toggleDocumentEnabled = () => {
+  const el = document.getElementById('documentEnabled');
+  if (el) {
+    state.documentEnabled = el.checked;
+    const detail = document.getElementById('documentDetail');
+    if (detail) detail.classList.toggle('hidden', !state.documentEnabled);
+    if (!state.documentEnabled) { state.documentId = ''; state.documentMode = ''; }
+  }
+};
+
+window.setDocumentMode = (mode) => {
+  state.documentMode = mode;
+  ['pre-shared', 'on-the-spot'].forEach(m => {
+    const btn = document.getElementById('docmode-' + m);
+    if (btn) {
+      if (m === mode) { btn.className = btn.className.replace(/border-gray-200 bg-white text-gray-600 hover:border-blue-300/g, 'border-blue-500 bg-blue-50 text-blue-700'); }
+      else { btn.className = btn.className.replace(/border-blue-500 bg-blue-50 text-blue-700/g, 'border-gray-200 bg-white text-gray-600 hover:border-blue-300'); }
+    }
+  });
+};
+
+window.onDocumentSelectChange = () => {
+  const sel = document.getElementById('documentId');
+  if (sel) {
+    state.documentId = sel.value;
+    const preview = document.getElementById('docPreview');
+    if (preview) {
+      const doc = state.documents.find(d => d.id === state.documentId);
+      if (doc) {
+        preview.innerHTML = doc.sections.map((s, i) => `
+          <details class="border border-gray-100 rounded-lg">
+            <summary class="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">${escapeHtml(s.title)}</summary>
+            <p class="px-3 py-2 text-xs text-gray-500 whitespace-pre-wrap border-t border-gray-100">${escapeHtml(s.content.substring(0, 200))}${s.content.length > 200 ? '...' : ''}</p>
+          </details>
+        `).join('');
+        preview.classList.remove('hidden');
+      } else { preview.innerHTML = ''; preview.classList.add('hidden'); }
+    }
+  }
+};
+
+window.importDocument = () => {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json'; input.style.display = 'none';
+  input.onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        const docs = Array.isArray(data) ? data : [data];
+        let count = 0;
+        for (const d of docs) {
+          if (!d.name || !d.name.trim()) { showToast('資料名(name)が必要です', 'error'); continue; }
+          if (!Array.isArray(d.sections) || d.sections.length === 0) { showToast('セクション(sections)が必要です', 'error'); continue; }
+          const valid = d.sections.every(s => s.title && s.content);
+          if (!valid) { showToast('各セクションにtitleとcontentが必要です', 'error'); continue; }
+          const exists = state.documents.some(ex => ex.name === d.name && ex.sections[0]?.title === d.sections[0]?.title);
+          if (exists) { showToast(`「${d.name}」は既に登録済みです`, 'error'); continue; }
+          state.documents.push({
+            id: 'doc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+            name: d.name, sections: d.sections.map(s => ({ title: s.title, content: s.content })),
+            createdAt: Date.now(),
+          });
+          count++;
+        }
+        saveDocumentsToStorage(); syncStateFromForm(); render();
+        if (count > 0) showToast(`${count}件の提案書をインポートしました`, 'success');
+      } catch (err) { showToast('JSONファイルの読み込みに失敗しました', 'error'); }
+    };
+    reader.readAsText(file);
+  };
+  document.body.appendChild(input); input.click();
+  setTimeout(() => document.body.removeChild(input), 1000);
+};
+
+window.exportDocuments = () => {
+  if (state.documents.length === 0) { showToast('エクスポートする提案書がありません', 'error'); return; }
+  const data = JSON.stringify(state.documents.map(d => ({ name: d.name, sections: d.sections })), null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const now = new Date();
+  const fileName = `提案書ライブラリ_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}.json`;
+  const a = document.createElement('a'); a.href = url; a.download = fileName; a.style.display = 'none';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  showToast(`${state.documents.length}件の提案書をエクスポートしました`, 'success');
+};
+
+window.deleteDocument = (id) => {
+  const doc = state.documents.find(d => d.id === id);
+  if (!doc) return;
+  if (!confirm(`提案書「${doc.name}」を削除しますか？`)) return;
+  state.documents = state.documents.filter(d => d.id !== id);
+  if (state.documentId === id) { state.documentId = ''; state.documentMode = ''; }
+  saveDocumentsToStorage(); syncStateFromForm(); render();
+  showToast('提案書を削除しました');
+};
+
+window.toggleDocLibrary = () => {
+  const list = document.getElementById('docLibrary');
+  if (list) list.classList.toggle('hidden');
+};
+
 function renderTypingIndicator() {
   return `<div class="flex justify-start fade-in" id="typingIndicator"><div class="flex flex-col items-center mr-2 mt-1 flex-shrink-0"><div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center"><i class="fas fa-user-tie text-white text-xs"></i></div><span class="text-[10px] text-gray-400 mt-0.5">顧客</span></div><div class="chat-bubble-ai px-4 py-3 shadow-sm"><div class="flex gap-1"><div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay:0s"></div><div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay:0.2s"></div><div class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay:0.4s"></div></div></div></div>`;
 }
@@ -781,7 +1038,8 @@ function updateTurnCount() { const el = document.getElementById('turnCount'); if
 async function generateAIFirstMessage() {
   state.isProcessing = true; showTypingIndicator(); updateMicUI();
   try {
-    const systemPrompt = buildSystemPrompt(state.scenario, state.persona, state.productURL, state.goal);
+    const docInfo = getDocumentContentForAPI();
+    const systemPrompt = buildSystemPrompt(state.scenario, state.persona, state.productURL, state.goal, docInfo.documentContent, docInfo.documentMode);
     const input = [{ role: 'user', content: '（営業担当がお客様のオフィスに到着し、受付を通って会議室に案内されました。お客様が会議室に入ってきます。お客様として最初の一言をお願いします。簡潔に挨拶してください。）' }];
     const response = await callResponsesAPI(input, { stream: true, instructions: systemPrompt, reasoningEffort: 'none', temperature: 0.8, max_output_tokens: 300 });
     if (!response.ok) { const e = await response.text(); throw new Error(`API エラー (${response.status}): ${e}`); }
@@ -939,7 +1197,8 @@ async function sendMessage(text) {
   appendChatBubble(state.messages[state.messages.length - 1]);
   showTypingIndicator(); updateMicUI(); updateTurnCount();
   try {
-    const systemPrompt = buildSystemPrompt(state.scenario, state.persona, state.productURL, state.goal);
+    const docInfo = getDocumentContentForAPI();
+    const systemPrompt = buildSystemPrompt(state.scenario, state.persona, state.productURL, state.goal, docInfo.documentContent, docInfo.documentMode);
     const input = state.messages.map(m => ({ role: m.role, content: m.content }));
     const response = await callResponsesAPI(input, { stream: true, instructions: systemPrompt, reasoningEffort: 'none', temperature: 0.8, max_output_tokens: 300 });
     if (!response.ok) { const e = await response.text(); throw new Error(`API エラー (${response.status}): ${e}`); }
@@ -1036,6 +1295,7 @@ window.endRoleplay = () => {
 // ============================================================
 async function generateFeedback() {
   try {
+    const docInfo = getDocumentContentForAPI();
     const conversationLog = state.messages.map(m => `${m.role === 'user' ? '【営業担当（練習者）】' : '【顧客（AI）】'}：${m.content}`).join('\n');
     const feedbackPrompt = `あなたは営業研修の専門コーチです。以下のロールプレイングの会話ログを分析し、「営業担当（練習者）」のパフォーマンスについて詳細なフィードバックを提供してください。
 注意：「顧客（AI）」はAIが演じた顧客役です。評価対象は「営業担当（練習者）」の発言・行動のみです。
@@ -1048,6 +1308,7 @@ ${state.persona}
 ${state.productURL ? `\n## 提案商品/サービスURL\n${state.productURL}` : ''}
 ${state.goal ? `\n## 営業のゴール設定\n${state.goal}` : ''}
 ${state.closingPoints ? `\n## クロージングポイント\n${state.closingPoints}\n※営業担当がこれらのポイントに到達できたかどうかも評価に含めてください。` : ''}
+${docInfo.documentContent ? `\n## 提案書情報\n営業担当は以下の提案書を${docInfo.documentMode === 'pre-shared' ? '事前共有' : 'その場で提示'}しました。\n${docInfo.documentContent}\n\n※提案書の活用度も評価に含めてください:\n- 提案書の内容を適切に活用して説明できたか\n- 顧客の質問に対して提案書の内容を引用・参照できたか\n${docInfo.documentMode === 'on-the-spot' ? '- 提案書を適切なタイミングで提示できたか' : '- 事前共有された内容について顧客の疑問に適切に対応できたか'}` : ''}
 
 ## 評価基準
 ${state.criteria}
