@@ -434,6 +434,7 @@ function renderSetup() {
                   <span class="text-sm font-semibold text-gray-800">${escapeHtml(t.name)}</span>
                   ${t.productURL ? '<span class="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full">URL付き</span>' : ''}
                   ${t.goal ? '<span class="text-[10px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded-full">目標付き</span>' : ''}
+                  ${t.closingPoints ? '<span class="text-[10px] bg-green-100 text-green-600 px-1.5 py-0.5 rounded-full">CP付き</span>' : ''}
                   ${t.documentId ? '<span class="text-[10px] bg-teal-100 text-teal-600 px-1.5 py-0.5 rounded-full">提案書付き</span>' : ''}
                 </div>
                 <div class="text-xs text-gray-500 mt-0.5">${escapeHtml(t.scenario.substring(0, 60))}...</div>
@@ -489,7 +490,7 @@ function renderSetup() {
                   <label class="block text-xs font-semibold text-gray-600 mb-2">使用する提案書</label>
                   <select id="documentId" onchange="onDocumentSelectChange()" class="w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm bg-white">
                     <option value="">-- 提案書を選択 --</option>
-                    ${state.documents.map(d => `<option value="${d.id}" ${state.documentId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}（${d.sections.length}セクション）</option>`).join('')}
+                    ${state.documents.map(d => `<option value="${d.id}" ${state.documentId === d.id ? 'selected' : ''}>${escapeHtml(d.name)}（${d.format === 'rich' ? (d.richData?.runtime_chunks?.length || 0) + 'チャンク' : (d.sections?.length || 0) + 'セクション'}）</option>`).join('')}
                   </select>
                 </div>
 
@@ -515,6 +516,15 @@ function renderSetup() {
                   ${(() => {
                     const doc = state.documents.find(d => d.id === state.documentId);
                     if (!doc) return '';
+                    if (doc.format === 'rich') {
+                      const chunks = doc.richData?.runtime_chunks || [];
+                      return chunks.map(c =>
+                        '<details class="border border-gray-100 rounded-lg">' +
+                          '<summary class="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">' + escapeHtml(c.topic) + '</summary>' +
+                          '<p class="px-3 py-2 text-xs text-gray-500 whitespace-pre-wrap border-t border-gray-100">' + escapeHtml(c.text.substring(0, 200)) + (c.text.length > 200 ? '...' : '') + '</p>' +
+                        '</details>'
+                      ).join('');
+                    }
                     return doc.sections.map(s =>
                       '<details class="border border-gray-100 rounded-lg">' +
                         '<summary class="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">' + escapeHtml(s.title) + '</summary>' +
@@ -537,14 +547,20 @@ function renderSetup() {
                     <button onclick="exportDocuments()" class="text-xs text-gray-500 hover:text-teal-600 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-teal-300 transition-all bg-white">
                       <i class="fas fa-file-export"></i>エクスポート
                     </button>
+                    <button onclick="downloadSampleDocument()" class="text-xs text-gray-500 hover:text-blue-600 font-medium flex items-center gap-1 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-blue-300 transition-all bg-white">
+                      <i class="fas fa-file-code"></i>サンプルJSON
+                    </button>
                   </div>
                 </div>
                 <div id="docLibrary" class="hidden space-y-2 mt-2">
                   ${state.documents.length > 0 ? state.documents.map(d => `
                     <div class="flex items-center gap-2 p-3 rounded-xl border border-gray-200 bg-white">
                       <div class="flex-1 min-w-0">
-                        <div class="text-sm font-medium text-gray-800 truncate">${escapeHtml(d.name)}</div>
-                        <div class="text-[10px] text-gray-400">${d.sections.length}セクション | ${d.createdAt ? new Date(d.createdAt).toLocaleDateString('ja-JP') : ''}</div>
+                        <div class="flex items-center gap-1.5 flex-wrap">
+                          <span class="text-sm font-medium text-gray-800 truncate">${escapeHtml(d.name)}</span>
+                          ${d.format === 'rich' ? '<span class="text-[10px] bg-purple-100 text-purple-600 px-1.5 py-0.5 rounded-full flex-shrink-0">AI変換済み</span>' : ''}
+                        </div>
+                        <div class="text-[10px] text-gray-400">${d.format === 'rich' ? (d.richData?.runtime_chunks?.length || 0) + 'チャンク' : (d.sections?.length || 0) + 'セクション'} | ${d.createdAt ? new Date(d.createdAt).toLocaleDateString('ja-JP') : ''}</div>
                       </div>
                       <button onclick="deleteDocument('${d.id}')" class="text-gray-400 hover:text-red-500 transition-colors p-2" title="削除">
                         <i class="fas fa-trash-alt text-sm"></i>
@@ -894,7 +910,26 @@ function getDocumentContentForAPI() {
   if (!state.documentEnabled || !state.documentId) return { documentContent: '', documentMode: '' };
   const doc = state.documents.find(d => d.id === state.documentId);
   if (!doc) return { documentContent: '', documentMode: '' };
-  const content = doc.sections.map(s => `### ${s.title}\n${s.content}`).join('\n\n');
+  let content;
+  if (doc.format === 'rich') {
+    const rd = doc.richData;
+    const parts = [];
+    if (rd.document_summary?.overall_theme) parts.push(`【資料概要】\n${rd.document_summary.overall_theme}`);
+    if (rd.runtime_chunks?.length) {
+      parts.push('【資料の主な内容】\n' + rd.runtime_chunks.map(c => `・[${c.topic}] ${c.text}`).join('\n'));
+    }
+    const concerns = rd.customer_side_knowledge?.customer_concerns;
+    if (concerns?.length) parts.push('【顧客として気になる点】\n' + concerns.map(c => `・${c.concern}`).join('\n'));
+    const questions = rd.customer_side_knowledge?.likely_customer_questions;
+    if (questions?.length) parts.push('【顧客として聞きたいこと】\n' + questions.map(q => `・${q.question}`).join('\n'));
+    const objections = rd.customer_side_knowledge?.customer_objections;
+    if (objections?.length) parts.push('【顧客の反論・保留理由】\n' + objections.map(o => `・${o.objection}`).join('\n'));
+    const unanswered = rd.customer_side_knowledge?.unanswered_questions;
+    if (unanswered?.length) parts.push('【資料だけでは判断できない点】\n' + unanswered.map(u => `・${u.question}`).join('\n'));
+    content = parts.join('\n\n');
+  } else {
+    content = doc.sections.map(s => `### ${s.title}\n${s.content}`).join('\n\n');
+  }
   return {
     documentContent: `提案書: ${doc.name}\n\n${content}`,
     documentMode: state.documentMode || 'pre-shared',
@@ -930,12 +965,22 @@ window.onDocumentSelectChange = () => {
     if (preview) {
       const doc = state.documents.find(d => d.id === state.documentId);
       if (doc) {
-        preview.innerHTML = doc.sections.map((s, i) => `
-          <details class="border border-gray-100 rounded-lg">
-            <summary class="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">${escapeHtml(s.title)}</summary>
-            <p class="px-3 py-2 text-xs text-gray-500 whitespace-pre-wrap border-t border-gray-100">${escapeHtml(s.content.substring(0, 200))}${s.content.length > 200 ? '...' : ''}</p>
-          </details>
-        `).join('');
+        if (doc.format === 'rich') {
+          const chunks = doc.richData.runtime_chunks || [];
+          preview.innerHTML = chunks.map(c => `
+            <details class="border border-gray-100 rounded-lg">
+              <summary class="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">${escapeHtml(c.topic)}</summary>
+              <p class="px-3 py-2 text-xs text-gray-500 whitespace-pre-wrap border-t border-gray-100">${escapeHtml(c.text.substring(0, 200))}${c.text.length > 200 ? '...' : ''}</p>
+            </details>
+          `).join('');
+        } else {
+          preview.innerHTML = doc.sections.map((s) => `
+            <details class="border border-gray-100 rounded-lg">
+              <summary class="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700 hover:bg-gray-50">${escapeHtml(s.title)}</summary>
+              <p class="px-3 py-2 text-xs text-gray-500 whitespace-pre-wrap border-t border-gray-100">${escapeHtml(s.content.substring(0, 200))}${s.content.length > 200 ? '...' : ''}</p>
+            </details>
+          `).join('');
+        }
         preview.classList.remove('hidden');
       } else { preview.innerHTML = ''; preview.classList.add('hidden'); }
     }
@@ -952,18 +997,34 @@ window.importDocument = () => {
     reader.onload = (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
+        // 単一ドキュメントまたは配列に対応
         const docs = Array.isArray(data) ? data : [data];
         let count = 0;
         for (const d of docs) {
+          // AI変換済みフォーマット（document_summaryフィールドで判定）
+          if (d.document_summary) {
+            const docName = (d.document_summary?.title || '').trim();
+            if (!docName) { showToast('AI変換済みJSON: document_summary.titleが必要です', 'error'); continue; }
+            if (!Array.isArray(d.runtime_chunks) || d.runtime_chunks.length === 0) { showToast('AI変換済みJSON: runtime_chunksが必要です', 'error'); continue; }
+            const exists = state.documents.some(ex => ex.name === docName && ex.format === 'rich');
+            if (exists) { showToast(`「${docName}」は既に登録済みです`, 'error'); continue; }
+            state.documents.push({
+              id: 'doc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
+              name: docName, format: 'rich', richData: d, createdAt: Date.now(),
+            });
+            count++; continue;
+          }
+          // 従来フォーマット
           if (!d.name || !d.name.trim()) { showToast('資料名(name)が必要です', 'error'); continue; }
           if (!Array.isArray(d.sections) || d.sections.length === 0) { showToast('セクション(sections)が必要です', 'error'); continue; }
           const valid = d.sections.every(s => s.title && s.content);
           if (!valid) { showToast('各セクションにtitleとcontentが必要です', 'error'); continue; }
-          const exists = state.documents.some(ex => ex.name === d.name && ex.sections[0]?.title === d.sections[0]?.title);
+          const exists = state.documents.some(ex => ex.name === d.name && ex.sections?.[0]?.title === d.sections[0]?.title);
           if (exists) { showToast(`「${d.name}」は既に登録済みです`, 'error'); continue; }
           state.documents.push({
             id: 'doc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5),
-            name: d.name, sections: d.sections.map(s => ({ title: s.title, content: s.content })),
+            name: d.name,
+            sections: d.sections.map(s => ({ title: s.title, content: s.content })),
             createdAt: Date.now(),
           });
           count++;
@@ -1004,6 +1065,34 @@ window.deleteDocument = (id) => {
 window.toggleDocLibrary = () => {
   const list = document.getElementById('docLibrary');
   if (list) list.classList.toggle('hidden');
+};
+
+window.downloadSampleDocument = () => {
+  const sample = [{
+    name: '【サンプル】クラウド業務管理システム提案書',
+    sections: [
+      {
+        title: 'エグゼクティブサマリー',
+        content: '本提案は、貴社の業務効率化を目的としたクラウド型業務管理システムの導入についてご提案するものです。現状のオンプレミス環境から移行することで、運用コスト30%削減、業務処理速度2倍向上を実現します。',
+      },
+      {
+        title: '現状の課題と解決策',
+        content: '【現状の課題】\n・レガシーシステムの保守コストが増大\n・リモートワーク対応が困難\n・データ連携に手作業が多く、ミスが発生\n\n【解決策】\n・クラウド移行により保守コストを削減\n・場所を選ばずアクセス可能なWebアプリケーション\n・API連携による自動データ同期',
+      },
+      {
+        title: '導入スケジュールと費用',
+        content: '【導入スケジュール】\nフェーズ1（1-2ヶ月）: 要件定義・設計\nフェーズ2（3-4ヶ月）: 開発・テスト\nフェーズ3（5ヶ月目）: 本番移行・研修\n\n【費用】\n初期費用: 500万円\n月額運用費: 30万円\nROI予測: 18ヶ月で投資回収',
+      },
+    ],
+  }];
+  const data = JSON.stringify(sample, null, 2);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'サンプル提案書.json'; a.style.display = 'none';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+  showToast('サンプルJSONをダウンロードしました', 'success');
 };
 
 function renderTypingIndicator() {
