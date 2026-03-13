@@ -216,18 +216,24 @@ ${persona}
   if (documentContent && documentMode) {
     if (documentMode === 'pre-shared') {
       prompt += `\n\n## 提案書（事前共有済み）
-以下は営業担当から事前に共有された提案書の内容です。あなた（顧客）はこの内容をすでに読んでおり、理解しています。
-提案書の内容に基づいて具体的な質問をしたり、記載内容について言及してください。
-ただし、すべてを肯定する必要はありません。疑問点や懸念を投げかけてください。
+あなたはこの提案書を事前に読んでいます。内容を理解した上で、自然な顧客として振る舞ってください。
+以下の情報はすべて「あなたが知っていること・感じていること」として会話に反映させてください。
+- 知識として持っている内容は、説明を受けたときに「読みました」「確認しました」のように自然に言及してよい
+- 懸念・反論はすべて自分のものとして、自然なタイミングで発言すること
+- 聞きたい質問は、流れに合わせて自然に口に出すこと
+- まだ納得していない点は、解消されるまで前向きにならないこと
 
 ${documentContent}`;
     } else if (documentMode === 'on-the-spot') {
       prompt += `\n\n## 提案書（その場で説明モード）
-営業担当は提案書を持参しています。以下はその内容ですが、あなた（顧客）はまだこの内容を知りません。
+営業担当は提案書を持参しています。以下はその内容ですが、あなた（顧客）はまだ見ていません。
 営業担当が「お見せします」「ご説明します」「資料をご覧ください」などの発言をするまでは、提案書の内容について一切言及しないでください。
-営業担当が提案書の説明を始めた後は、内容について質問や反応をしてください。
+営業担当が提案書の説明を始めた後は、以下の知識を自分のものとして反応してください。
+- 懸念・反論は自然なタイミングで発言すること
+- 聞きたい質問は流れに合わせて口に出すこと
+- まだ納得していない点は、解消されるまで前向きにならないこと
 
-※内部参照用（顧客として直接言及しないこと）:
+※内部参照用（顧客として説明を受ける前は直接言及しないこと）:
 ${documentContent}`;
     }
   }
@@ -914,18 +920,18 @@ function getDocumentContentForAPI() {
   if (doc.format === 'rich') {
     const rd = doc.richData;
     const parts = [];
-    if (rd.document_summary?.overall_theme) parts.push(`【資料概要】\n${rd.document_summary.overall_theme}`);
+    if (rd.document_summary?.overall_theme) parts.push(`【この資料について顧客が理解している全体像】\n${rd.document_summary.overall_theme}`);
     if (rd.runtime_chunks?.length) {
-      parts.push('【資料の主な内容】\n' + rd.runtime_chunks.map(c => `・[${c.topic}] ${c.text}`).join('\n'));
+      parts.push('【あなたが資料から得た知識（これを前提に会話すること）】\n' + rd.runtime_chunks.map(c => `・[${c.topic}] ${c.text}`).join('\n'));
     }
     const concerns = rd.customer_side_knowledge?.customer_concerns;
-    if (concerns?.length) parts.push('【顧客として気になる点】\n' + concerns.map(c => `・${c.concern}`).join('\n'));
+    if (concerns?.length) parts.push('【あなたが持つ懸念（会話の中で自然にこれらを表明すること）】\n' + concerns.map(c => `・${c.concern}`).join('\n'));
     const questions = rd.customer_side_knowledge?.likely_customer_questions;
-    if (questions?.length) parts.push('【顧客として聞きたいこと】\n' + questions.map(q => `・${q.question}`).join('\n'));
+    if (questions?.length) parts.push('【あなたが聞きたい質問（適切なタイミングで自然に聞くこと）】\n' + questions.map(q => `・${q.question}`).join('\n'));
     const objections = rd.customer_side_knowledge?.customer_objections;
-    if (objections?.length) parts.push('【顧客の反論・保留理由】\n' + objections.map(o => `・${o.objection}`).join('\n'));
+    if (objections?.length) parts.push('【あなたの反論・保留理由（営業の説明が不十分な場合に使うこと）】\n' + objections.map(o => `・${o.objection}`).join('\n'));
     const unanswered = rd.customer_side_knowledge?.unanswered_questions;
-    if (unanswered?.length) parts.push('【資料だけでは判断できない点】\n' + unanswered.map(u => `・${u.question}`).join('\n'));
+    if (unanswered?.length) parts.push('【あなたがまだ納得していない点（これらが解消されるまで前向きになりすぎないこと）】\n' + unanswered.map(u => `・${u.question}`).join('\n'));
     content = parts.join('\n\n');
   } else {
     content = doc.sections.map(s => `### ${s.title}\n${s.content}`).join('\n\n');

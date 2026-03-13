@@ -703,18 +703,18 @@ function getDocumentContentForAPI() {
   if (doc.format === 'rich') {
     const rd = doc.richData;
     const parts = [];
-    if (rd.document_summary?.overall_theme) parts.push(`【資料概要】\n${rd.document_summary.overall_theme}`);
+    if (rd.document_summary?.overall_theme) parts.push(`【この資料について顧客が理解している全体像】\n${rd.document_summary.overall_theme}`);
     if (rd.runtime_chunks?.length) {
-      parts.push('【資料の主な内容】\n' + rd.runtime_chunks.map(c => `・[${c.topic}] ${c.text}`).join('\n'));
+      parts.push('【あなたが資料から得た知識（これを前提に会話すること）】\n' + rd.runtime_chunks.map(c => `・[${c.topic}] ${c.text}`).join('\n'));
     }
     const concerns = rd.customer_side_knowledge?.customer_concerns;
-    if (concerns?.length) parts.push('【顧客として気になる点】\n' + concerns.map(c => `・${c.concern}`).join('\n'));
+    if (concerns?.length) parts.push('【あなたが持つ懸念（会話の中で自然にこれらを表明すること）】\n' + concerns.map(c => `・${c.concern}`).join('\n'));
     const questions = rd.customer_side_knowledge?.likely_customer_questions;
-    if (questions?.length) parts.push('【顧客として聞きたいこと】\n' + questions.map(q => `・${q.question}`).join('\n'));
+    if (questions?.length) parts.push('【あなたが聞きたい質問（適切なタイミングで自然に聞くこと）】\n' + questions.map(q => `・${q.question}`).join('\n'));
     const objections = rd.customer_side_knowledge?.customer_objections;
-    if (objections?.length) parts.push('【顧客の反論・保留理由】\n' + objections.map(o => `・${o.objection}`).join('\n'));
+    if (objections?.length) parts.push('【あなたの反論・保留理由（営業の説明が不十分な場合に使うこと）】\n' + objections.map(o => `・${o.objection}`).join('\n'));
     const unanswered = rd.customer_side_knowledge?.unanswered_questions;
-    if (unanswered?.length) parts.push('【資料だけでは判断できない点】\n' + unanswered.map(u => `・${u.question}`).join('\n'));
+    if (unanswered?.length) parts.push('【あなたがまだ納得していない点（これらが解消されるまで前向きになりすぎないこと）】\n' + unanswered.map(u => `・${u.question}`).join('\n'));
     content = parts.join('\n\n');
   } else {
     content = doc.sections.map(s => `### ${s.title}\n${s.content}`).join('\n\n');
